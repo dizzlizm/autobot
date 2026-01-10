@@ -1,0 +1,11 @@
+{
+  "name": "lint-tools",
+  "version": "1.0.0",
+  "description": "Universal linting tools",
+  "scripts": {
+    "lint": "node lint-js.js"
+  },
+  "dependencies": {
+    "eslint": "^8.0.0"
+  }
+}
