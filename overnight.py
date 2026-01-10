@@ -413,6 +413,9 @@ class OvernightRunner:
                     task.status = "failed"
                     task.error = f"Aider exited with code {result.returncode}"
                     self.log(f"Task {task.id} failed: {task.error}", "ERROR")
+                    # Show aider output for debugging
+                    if task.aider_output.strip():
+                        self.log(f"Aider output:\n{task.aider_output[:2000]}", "DEBUG")
 
         except subprocess.TimeoutExpired:
             task.status = "failed"
