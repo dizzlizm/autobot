@@ -296,47 +296,52 @@ class OvernightRunner:
         """Parse token usage and cost from aider output."""
         usage = Usage()
 
-        # Match patterns like:
-        # "Tokens: 12k sent, 1.5k received"
+        # Aider output formats vary. Look for patterns like:
+        # "Tokens: 12k sent, 1.5k received. Cost: $0.01"
         # "Tokens: 12,345 sent, 1,234 received"
-        # "Cost: $0.01"
+        # We want the LAST occurrence (final totals)
 
-        # Parse tokens
-        token_pattern = r'Tokens?:\s*([\d,.]+)k?\s*sent,?\s*([\d,.]+)k?\s*received'
-        token_match = re.search(token_pattern, output, re.IGNORECASE)
-        if token_match:
-            sent_str = token_match.group(1).replace(',', '')
-            recv_str = token_match.group(2).replace(',', '')
+        # Find all token lines and use the last one
+        token_pattern = r'Tokens?:\s*([\d,.]+)(k)?\s*sent[,.]?\s*([\d,.]+)(k)?\s*(?:received|recv)'
+        token_matches = list(re.finditer(token_pattern, output, re.IGNORECASE))
 
-            # Handle k suffix
-            if 'k' in token_match.group(0).lower():
-                try:
-                    usage.tokens_sent = int(float(sent_str) * 1000)
-                    usage.tokens_received = int(float(recv_str) * 1000)
-                except ValueError:
-                    pass
-            else:
-                try:
-                    usage.tokens_sent = int(float(sent_str))
-                    usage.tokens_received = int(float(recv_str))
-                except ValueError:
-                    pass
-
-        # Parse cost
-        cost_pattern = r'Cost:\s*\$?([\d.]+)'
-        cost_match = re.search(cost_pattern, output, re.IGNORECASE)
-        if cost_match:
+        if token_matches:
+            match = token_matches[-1]  # Use last match
             try:
-                usage.cost = float(cost_match.group(1))
+                sent_str = match.group(1).replace(',', '')
+                sent_k = match.group(2)  # 'k' or None
+                recv_str = match.group(3).replace(',', '')
+                recv_k = match.group(4)  # 'k' or None
+
+                sent = float(sent_str)
+                recv = float(recv_str)
+
+                if sent_k:
+                    sent *= 1000
+                if recv_k:
+                    recv *= 1000
+
+                usage.tokens_sent = int(sent)
+                usage.tokens_received = int(recv)
+            except (ValueError, AttributeError):
+                pass
+
+        # Find cost - look for last "Cost: $X.XX" pattern
+        cost_pattern = r'Cost:\s*\$?([\d.]+)'
+        cost_matches = list(re.finditer(cost_pattern, output, re.IGNORECASE))
+        if cost_matches:
+            try:
+                usage.cost = float(cost_matches[-1].group(1))
             except ValueError:
                 pass
 
-        # Also look for cumulative session cost patterns
-        session_cost_pattern = r'session\s+cost:\s*\$?([\d.]+)'
-        session_match = re.search(session_cost_pattern, output, re.IGNORECASE)
-        if session_match:
+        # Also check for session total which is more reliable
+        session_pattern = r'(?:session|total)\s*(?:cost)?:?\s*\$?([\d.]+)'
+        session_matches = list(re.finditer(session_pattern, output, re.IGNORECASE))
+        if session_matches:
             try:
-                usage.cost = max(usage.cost, float(session_match.group(1)))
+                session_cost = float(session_matches[-1].group(1))
+                usage.cost = max(usage.cost, session_cost)
             except ValueError:
                 pass
 
