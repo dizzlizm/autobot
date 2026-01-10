@@ -32,8 +32,28 @@ DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
 STATE_FILE = "overnight_state.json"
-LOG_DIR = Path.home() / "overnight" / "logs"
-REPORT_DIR = Path.home() / "reports"
+
+# Use script directory for logs/reports
+SCRIPT_DIR = Path(__file__).parent.resolve()
+LOG_DIR = SCRIPT_DIR / "logs"
+REPORT_DIR = SCRIPT_DIR / "reports"
+AIDER_CMD = SCRIPT_DIR / "aider"  # Use the wrapper script that activates venv
+SMART_TEST = SCRIPT_DIR / "tools" / "smart-test" / "smart-test.py"  # Auto-detect testing
+
+
+@dataclass
+class Usage:
+    """Tracks token usage and cost."""
+    tokens_sent: int = 0
+    tokens_received: int = 0
+    cost: float = 0.0
+
+    def __add__(self, other):
+        return Usage(
+            tokens_sent=self.tokens_sent + other.tokens_sent,
+            tokens_received=self.tokens_received + other.tokens_received,
+            cost=self.cost + other.cost
+        )
 
 
 @dataclass
@@ -49,6 +69,9 @@ class Task:
     commits: list = field(default_factory=list)
     error: Optional[str] = None
     aider_output: str = ""
+    tokens_sent: int = 0
+    tokens_received: int = 0
+    cost: float = 0.0
 
 
 @dataclass
@@ -80,6 +103,9 @@ class OvernightRunner:
         dry_run: bool = False,
         resume: bool = False,
         report_path: Optional[str] = None,
+        test_cmd: Optional[str] = None,
+        lint_cmd: Optional[str] = None,
+        fix_retries: int = 2,
     ):
         self.project_path = Path(project_path).resolve()
         self.tasks_file = Path(tasks_file).resolve()
@@ -89,6 +115,9 @@ class OvernightRunner:
         self.dry_run = dry_run
         self.resume = resume
         self.report_path = Path(report_path) if report_path else None
+        self.test_cmd = test_cmd
+        self.lint_cmd = lint_cmd
+        self.fix_retries = fix_retries  # How many times to retry if tests fail
 
         self.state: Optional[OvernightState] = None
         self.log_file: Optional[Path] = None
@@ -123,14 +152,14 @@ class OvernightRunner:
         if not self.tasks_file.exists():
             errors.append(f"Tasks file does not exist: {self.tasks_file}")
 
-        # Check Aider is installed
-        if not shutil.which("aider"):
-            errors.append("Aider is not installed or not in PATH")
+        # Check Aider wrapper exists
+        if not AIDER_CMD.exists():
+            errors.append(f"Aider wrapper not found at {AIDER_CMD}")
 
         # Check API key
         if not os.environ.get("GEMINI_API_KEY"):
-            # Try loading from .env
-            env_file = Path.home() / "overnight" / ".env"
+            # Try loading from .env in script directory
+            env_file = SCRIPT_DIR / ".env"
             if env_file.exists():
                 with open(env_file) as f:
                     for line in f:
@@ -263,6 +292,177 @@ class OvernightRunner:
         )
         return result.stdout.strip()
 
+    def parse_usage(self, output: str) -> Usage:
+        """Parse token usage and cost from aider output."""
+        usage = Usage()
+
+        # Aider output formats vary. Look for patterns like:
+        # "Tokens: 12k sent, 1.5k received. Cost: $0.01"
+        # "Tokens: 12,345 sent, 1,234 received"
+        # We want the LAST occurrence (final totals)
+
+        # Find all token lines and use the last one
+        token_pattern = r'Tokens?:\s*([\d,.]+)(k)?\s*sent[,.]?\s*([\d,.]+)(k)?\s*(?:received|recv)'
+        token_matches = list(re.finditer(token_pattern, output, re.IGNORECASE))
+
+        if token_matches:
+            match = token_matches[-1]  # Use last match
+            try:
+                sent_str = match.group(1).replace(',', '')
+                sent_k = match.group(2)  # 'k' or None
+                recv_str = match.group(3).replace(',', '')
+                recv_k = match.group(4)  # 'k' or None
+
+                sent = float(sent_str)
+                recv = float(recv_str)
+
+                if sent_k:
+                    sent *= 1000
+                if recv_k:
+                    recv *= 1000
+
+                usage.tokens_sent = int(sent)
+                usage.tokens_received = int(recv)
+            except (ValueError, AttributeError):
+                pass
+
+        # Find cost - look for last "Cost: $X.XX" pattern
+        cost_pattern = r'Cost:\s*\$?([\d.]+)'
+        cost_matches = list(re.finditer(cost_pattern, output, re.IGNORECASE))
+        if cost_matches:
+            try:
+                usage.cost = float(cost_matches[-1].group(1))
+            except ValueError:
+                pass
+
+        # Also check for session total which is more reliable
+        session_pattern = r'(?:session|total)\s*(?:cost)?:?\s*\$?([\d.]+)'
+        session_matches = list(re.finditer(session_pattern, output, re.IGNORECASE))
+        if session_matches:
+            try:
+                session_cost = float(session_matches[-1].group(1))
+                usage.cost = max(usage.cost, session_cost)
+            except ValueError:
+                pass
+
+        return usage
+
+    def run_command(self, cmd: str, description: str) -> tuple[bool, str]:
+        """Run a shell command and return (success, output)."""
+        self.log(f"Running {description}: {cmd}")
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 min timeout for tests/lint
+                cwd=self.project_path
+            )
+            output = result.stdout + "\n" + result.stderr
+            success = result.returncode == 0
+            if success:
+                self.log(f"{description} passed")
+            else:
+                self.log(f"{description} failed (exit code {result.returncode})", "WARN")
+            return success, output
+        except subprocess.TimeoutExpired:
+            self.log(f"{description} timed out", "ERROR")
+            return False, "Command timed out"
+        except Exception as e:
+            self.log(f"{description} error: {e}", "ERROR")
+            return False, str(e)
+
+    def run_tests(self) -> tuple[bool, str]:
+        """Run the test command - auto-detects if not specified."""
+        if self.test_cmd:
+            return self.run_command(self.test_cmd, "Tests")
+        # Auto-detect using smart-test
+        if SMART_TEST.exists():
+            cmd = f"python3 {SMART_TEST} test {self.project_path}"
+            return self.run_command(cmd, "Tests (auto-detected)")
+        return True, ""  # No test tool available
+
+    def run_lint(self) -> tuple[bool, str]:
+        """Run the lint command - auto-detects if not specified."""
+        if self.lint_cmd:
+            return self.run_command(self.lint_cmd, "Lint")
+        # Auto-detect using smart-test
+        if SMART_TEST.exists():
+            cmd = f"python3 {SMART_TEST} lint {self.project_path}"
+            return self.run_command(cmd, "Lint (auto-detected)")
+        return True, ""  # No lint tool available
+
+    def run_aider_fix(self, error_output: str, fix_type: str) -> bool:
+        """Ask Aider to fix test/lint failures."""
+        self.log(f"Asking Aider to fix {fix_type} failures...")
+
+        # Truncate error output if too long
+        if len(error_output) > 4000:
+            error_output = error_output[:4000] + "\n...(truncated)"
+
+        fix_message = f"""Fix the following {fix_type} failures:
+
+{error_output}
+
+Please analyze the errors and fix the code to make {fix_type} pass."""
+
+        cmd = [
+            str(AIDER_CMD),
+            "--model", self.model,
+            "--yes",
+            "--auto-commits",
+            "--no-stream",
+            "--message", fix_message,
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                cwd=self.project_path
+            )
+            return result.returncode == 0
+        except Exception as e:
+            self.log(f"Aider fix failed: {e}", "ERROR")
+            return False
+
+    def validate_task(self, task: Task) -> bool:
+        """Run tests and lint after a task, attempt fixes if needed."""
+        # Always try validation - smart-test will auto-detect if no cmds specified
+
+        for attempt in range(self.fix_retries + 1):
+            all_passed = True
+
+            # Run lint first (usually faster)
+            if self.lint_cmd:
+                lint_ok, lint_output = self.run_lint()
+                if not lint_ok:
+                    all_passed = False
+                    if attempt < self.fix_retries:
+                        self.run_aider_fix(lint_output, "lint")
+                        continue
+
+            # Run tests
+            if self.test_cmd:
+                test_ok, test_output = self.run_tests()
+                if not test_ok:
+                    all_passed = False
+                    if attempt < self.fix_retries:
+                        self.run_aider_fix(test_output, "test")
+                        continue
+
+            if all_passed:
+                if attempt > 0:
+                    self.log(f"Validation passed after {attempt} fix attempts")
+                return True
+
+        self.log("Validation failed after all fix attempts", "ERROR")
+        self.state.warnings.append(f"Task {task.id}: Tests/lint failed after {self.fix_retries} fix attempts")
+        return False
+
     def run_aider_task(self, task: Task) -> bool:
         """Run Aider for a single task."""
         self.log(f"Starting task {task.id}: {task.title}")
@@ -280,7 +480,7 @@ class OvernightRunner:
         message = f"{task.title}\n\n{task.description}"
 
         cmd = [
-            "aider",
+            str(AIDER_CMD),  # Use wrapper script that activates venv
             "--model", self.model,
             "--yes",  # Auto-accept all prompts
             "--auto-commits",  # Auto-commit changes
@@ -305,34 +505,69 @@ class OvernightRunner:
             return True
 
         try:
-            # Run Aider with timeout
-            result = subprocess.run(
+            # Run Aider with real-time output streaming
+            self.log(f"Running: {' '.join(cmd[:4])}...")
+            print("-" * 40)
+
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=self.timeout,
                 cwd=self.project_path
             )
 
-            task.aider_output = result.stdout + "\n" + result.stderr
+            output_lines = []
+            start = time.time()
+
+            # Stream output in real-time
+            while True:
+                # Check timeout
+                if time.time() - start > self.timeout:
+                    process.kill()
+                    raise subprocess.TimeoutExpired(cmd, self.timeout)
+
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    print(f"  {line.rstrip()}")  # Show real-time
+                    output_lines.append(line)
+
+            # Get return code
+            returncode = process.returncode
+            task.aider_output = "".join(output_lines)
+            print("-" * 40)
+
+            # Parse usage from output
+            usage = self.parse_usage(task.aider_output)
+            task.tokens_sent = usage.tokens_sent
+            task.tokens_received = usage.tokens_received
+            task.cost = usage.cost
 
             # Check for commits made during this task
             new_commits = self.get_commits_since(commit_before)
             task.commits = new_commits
 
-            if result.returncode == 0:
-                task.status = "completed"
-                self.log(f"Task {task.id} completed with {len(new_commits)} commits")
-            else:
-                # Aider returned non-zero but may have made partial progress
-                if new_commits:
-                    task.status = "completed"
-                    self.log(f"Task {task.id} completed (with warnings)")
+            if returncode == 0 or new_commits:
+                # Aider completed (or made progress)
+                usage_str = f", {usage.tokens_sent + usage.tokens_received:,} tokens, ${usage.cost:.4f}" if usage.tokens_sent else ""
+                self.log(f"Task {task.id} aider done with {len(new_commits)} commits{usage_str}")
+
+                if returncode != 0:
                     self.state.warnings.append(f"Task {task.id}: Aider returned non-zero exit code")
+
+                # Run validation (tests/lint)
+                if self.validate_task(task):
+                    task.status = "completed"
+                    self.log(f"Task {task.id} completed and validated")
                 else:
-                    task.status = "failed"
-                    task.error = f"Aider exited with code {result.returncode}"
-                    self.log(f"Task {task.id} failed: {task.error}", "ERROR")
+                    task.status = "completed"  # Still mark complete but with warnings
+                    self.log(f"Task {task.id} completed but validation failed", "WARN")
+            else:
+                task.status = "failed"
+                task.error = f"Aider exited with code {returncode}"
+                self.log(f"Task {task.id} failed: {task.error}", "ERROR")
 
         except subprocess.TimeoutExpired:
             task.status = "failed"
@@ -408,6 +643,12 @@ class OvernightRunner:
         failed = sum(1 for t in self.state.tasks if t.status == "failed")
         total_commits = sum(len(t.commits) for t in self.state.tasks)
 
+        # Calculate usage totals
+        total_tokens_sent = sum(t.tokens_sent for t in self.state.tasks)
+        total_tokens_received = sum(t.tokens_received for t in self.state.tasks)
+        total_tokens = total_tokens_sent + total_tokens_received
+        total_cost = sum(t.cost for t in self.state.tasks)
+
         report_lines = [
             f"# Overnight Report - {now.strftime('%Y-%m-%d')}",
             "",
@@ -416,6 +657,12 @@ class OvernightRunner:
             f"- **Tasks**: {completed}/{len(self.state.tasks)} completed",
             f"- **Commits**: {total_commits}",
             f"- **Branch**: `{self.branch}`",
+            "",
+            "## Usage & Cost",
+            f"- **Tokens sent**: {total_tokens_sent:,}",
+            f"- **Tokens received**: {total_tokens_received:,}",
+            f"- **Total tokens**: {total_tokens:,}",
+            f"- **Total cost**: ${total_cost:.4f}",
             "",
             "## Results",
         ]
@@ -436,6 +683,8 @@ class OvernightRunner:
                 duration_str = f" ({mins}m {secs}s"
                 if task.commits:
                     duration_str += f", {len(task.commits)} commits"
+                if task.cost > 0:
+                    duration_str += f", ${task.cost:.4f}"
                 duration_str += ")"
 
             error_info = ""
@@ -559,11 +808,17 @@ class OvernightRunner:
 
         self.log(f"Report saved to: {report_path}")
 
+        # Calculate final usage
+        total_tokens = sum(t.tokens_sent + t.tokens_received for t in self.state.tasks)
+        total_cost = sum(t.cost for t in self.state.tasks)
+
         # Print summary
         self.log("=" * 60)
         self.log("Session Complete!")
         self.log(f"Completed: {self.state.completed_count}/{len(self.state.tasks)} tasks")
         self.log(f"Total commits: {self.state.total_commits}")
+        self.log(f"Total tokens: {total_tokens:,}")
+        self.log(f"Total cost: ${total_cost:.4f}")
         self.log(f"Report: {report_path}")
         self.log("=" * 60)
 
@@ -583,17 +838,22 @@ Examples:
     # Basic usage
     overnight.py --project ~/projects/web-app --tasks tasks.md
 
-    # With custom branch
-    overnight.py --project ~/projects/api --tasks sprint.md --branch overnight-sprint-23
+    # With tests - runs 'npm test' after each task, retries 2x if fails
+    overnight.py --project ~/projects/app --tasks tasks.md --test-cmd "npm test"
+
+    # With tests AND linting
+    overnight.py --project ~/projects/app --tasks tasks.md \\
+        --test-cmd "npm test" --lint-cmd "npm run lint"
+
+    # Python project with pytest and ruff
+    overnight.py --project ~/projects/api --tasks tasks.md \\
+        --test-cmd "pytest" --lint-cmd "ruff check ."
 
     # Resume interrupted run
     overnight.py --project ~/projects/web-app --tasks tasks.md --resume
 
     # Dry run (no changes)
     overnight.py --project ~/projects/web-app --tasks tasks.md --dry-run
-
-    # Use Gemini Flash (faster, cheaper)
-    overnight.py --project ~/projects/web-app --tasks tasks.md --model gemini/gemini-2.5-flash
         """
     )
 
@@ -636,6 +896,20 @@ Examples:
         action="store_true",
         help="Show what would be done without making changes"
     )
+    parser.add_argument(
+        "--test-cmd",
+        help="Command to run tests after each task (e.g., 'npm test', 'pytest')"
+    )
+    parser.add_argument(
+        "--lint-cmd",
+        help="Command to run linter after each task (e.g., 'npm run lint', 'ruff check')"
+    )
+    parser.add_argument(
+        "--fix-retries",
+        type=int,
+        default=2,
+        help="Number of times to ask Aider to fix failing tests/lint (default: 2)"
+    )
 
     args = parser.parse_args()
 
@@ -648,6 +922,9 @@ Examples:
         dry_run=args.dry_run,
         resume=args.resume,
         report_path=args.report,
+        test_cmd=args.test_cmd,
+        lint_cmd=args.lint_cmd,
+        fix_retries=args.fix_retries,
     )
 
     # Handle signals for graceful shutdown
