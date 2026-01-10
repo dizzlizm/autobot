@@ -1,10 +1,11 @@
 #!/bin/bash
 # Aider + Gemini Overnight Automation Setup Script
-# This script installs and configures Aider for use with the Gemini API
+# This script installs EVERYTHING needed on a fresh Ubuntu machine
 
 set -e
 
 OVERNIGHT_DIR="$HOME/overnight"
+VENV_DIR="$OVERNIGHT_DIR/venv"
 CONFIG_DIR="$HOME/.config/aider"
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -23,55 +24,123 @@ echo_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check if running on Ubuntu/Debian
-check_system() {
-    echo_status "Checking system requirements..."
+#------------------------------------------------------------------------------
+# STEP 1: Install System Dependencies
+#------------------------------------------------------------------------------
+install_system_deps() {
+    echo_status "Installing system dependencies..."
 
-    if ! command -v python3 &> /dev/null; then
-        echo_error "Python3 is required but not installed."
-        exit 1
-    fi
+    # Update package list
+    sudo apt-get update
 
-    PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    echo_status "Python version: $PYTHON_VERSION"
+    # Install Python 3, pip, venv, git, and other essentials
+    sudo apt-get install -y \
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-dev \
+        git \
+        curl \
+        wget \
+        build-essential \
+        libffi-dev \
+        libssl-dev
 
-    if ! command -v git &> /dev/null; then
-        echo_error "Git is required but not installed."
-        exit 1
-    fi
+    # Verify installations
+    echo_status "Verifying installations..."
+    python3 --version
+    pip3 --version
+    git --version
 
-    if ! command -v pip3 &> /dev/null && ! command -v pipx &> /dev/null; then
-        echo_warn "Neither pip3 nor pipx found. Installing pipx..."
-        sudo apt-get update && sudo apt-get install -y pipx
-        pipx ensurepath
-    fi
+    echo_status "System dependencies installed successfully"
 }
 
-# Install Aider using pipx (recommended) or pip
-install_aider() {
-    echo_status "Installing Aider..."
+#------------------------------------------------------------------------------
+# STEP 2: Create Directory Structure
+#------------------------------------------------------------------------------
+create_directories() {
+    echo_status "Creating directory structure..."
 
-    if command -v pipx &> /dev/null; then
-        echo_status "Using pipx for installation (recommended)..."
-        pipx install aider-chat || pipx upgrade aider-chat
-        # Install google-generativeai for Gemini support
-        pipx inject aider-chat google-generativeai
+    mkdir -p "$OVERNIGHT_DIR/templates"
+    mkdir -p "$OVERNIGHT_DIR/logs"
+    mkdir -p "$OVERNIGHT_DIR/systemd"
+    mkdir -p "$HOME/reports"
+    mkdir -p "$HOME/projects"
+    mkdir -p "$CONFIG_DIR"
+
+    echo_status "Directories created:"
+    echo "  - $OVERNIGHT_DIR"
+    echo "  - $HOME/reports"
+    echo "  - $HOME/projects"
+}
+
+#------------------------------------------------------------------------------
+# STEP 3: Create Python Virtual Environment and Install Aider
+#------------------------------------------------------------------------------
+setup_venv_and_aider() {
+    echo_status "Setting up Python virtual environment..."
+
+    # Create venv if it doesn't exist
+    if [ ! -d "$VENV_DIR" ]; then
+        python3 -m venv "$VENV_DIR"
+        echo_status "Created virtual environment at $VENV_DIR"
     else
-        echo_status "Using pip for installation..."
-        pip3 install --user --upgrade aider-chat google-generativeai
+        echo_status "Virtual environment already exists"
     fi
 
-    # Verify installation
+    # Activate venv
+    source "$VENV_DIR/bin/activate"
+
+    # Upgrade pip
+    echo_status "Upgrading pip..."
+    pip install --upgrade pip
+
+    # Install aider and google-generativeai
+    echo_status "Installing Aider (this may take a few minutes)..."
+    pip install aider-chat google-generativeai psutil
+
+    # Verify aider installation
     if command -v aider &> /dev/null; then
-        AIDER_VERSION=$(aider --version 2>/dev/null || echo "unknown")
+        AIDER_VERSION=$(aider --version 2>/dev/null || echo "installed")
         echo_status "Aider installed successfully: $AIDER_VERSION"
     else
-        echo_error "Aider installation failed. Please check the output above."
+        echo_error "Aider installation failed"
         exit 1
     fi
+
+    deactivate
 }
 
-# Configure Gemini API
+#------------------------------------------------------------------------------
+# STEP 4: Create Wrapper Scripts (so you don't need to activate venv manually)
+#------------------------------------------------------------------------------
+create_wrapper_scripts() {
+    echo_status "Creating wrapper scripts..."
+
+    # Create aider wrapper
+    cat > "$OVERNIGHT_DIR/aider" << EOF
+#!/bin/bash
+# Wrapper script to run aider from the virtual environment
+source "$VENV_DIR/bin/activate"
+exec aider "\$@"
+EOF
+    chmod +x "$OVERNIGHT_DIR/aider"
+
+    # Create overnight wrapper
+    cat > "$OVERNIGHT_DIR/run-overnight" << EOF
+#!/bin/bash
+# Wrapper script to run overnight.py from the virtual environment
+source "$VENV_DIR/bin/activate"
+exec python3 "$OVERNIGHT_DIR/overnight.py" "\$@"
+EOF
+    chmod +x "$OVERNIGHT_DIR/run-overnight"
+
+    echo_status "Created wrapper scripts"
+}
+
+#------------------------------------------------------------------------------
+# STEP 5: Configure Gemini API
+#------------------------------------------------------------------------------
 configure_gemini() {
     echo_status "Configuring Gemini API..."
 
@@ -80,6 +149,10 @@ configure_gemini() {
         echo_status "GEMINI_API_KEY already set in environment"
     else
         echo_warn "GEMINI_API_KEY not found in environment"
+        echo ""
+        echo "You need a Gemini API key. Get one free at:"
+        echo "  https://aistudio.google.com/app/apikey"
+        echo ""
         read -p "Enter your Gemini API key (or press Enter to skip): " API_KEY
 
         if [ -n "$API_KEY" ]; then
@@ -98,29 +171,15 @@ configure_gemini() {
 
             export GEMINI_API_KEY="$API_KEY"
         else
-            echo_warn "Skipping API key configuration. You'll need to set GEMINI_API_KEY manually."
+            echo_warn "Skipping API key configuration."
+            echo_warn "You'll need to set GEMINI_API_KEY manually before using Aider."
         fi
     fi
 }
 
-# Create directory structure
-create_directories() {
-    echo_status "Creating directory structure..."
-
-    mkdir -p "$OVERNIGHT_DIR/templates"
-    mkdir -p "$OVERNIGHT_DIR/logs"
-    mkdir -p "$HOME/reports"
-    mkdir -p "$HOME/projects"
-    mkdir -p "$CONFIG_DIR"
-
-    echo_status "Directories created:"
-    echo "  - $OVERNIGHT_DIR/templates"
-    echo "  - $OVERNIGHT_DIR/logs"
-    echo "  - $HOME/reports"
-    echo "  - $HOME/projects"
-}
-
-# Create global aider config
+#------------------------------------------------------------------------------
+# STEP 6: Create Global Aider Config
+#------------------------------------------------------------------------------
 create_aider_config() {
     echo_status "Creating global Aider configuration..."
 
@@ -146,39 +205,69 @@ EOF
     echo_status "Created $CONFIG_DIR/.aider.conf.yml"
 }
 
-# Create shell aliases
-create_aliases() {
-    echo_status "Creating shell aliases..."
+#------------------------------------------------------------------------------
+# STEP 7: Add to PATH and Create Aliases
+#------------------------------------------------------------------------------
+setup_shell() {
+    echo_status "Setting up shell environment..."
 
-    ALIAS_BLOCK='
-# Aider Overnight Automation aliases
-alias overnight="python3 ~/overnight/overnight.py"
-alias aider-gemini="aider --model gemini --yes"
-alias aider-quick="aider --model gemini --yes --message"
-'
+    SHELL_BLOCK="
+# Aider Overnight Automation
+export PATH=\"\$HOME/overnight:\$PATH\"
+alias overnight=\"\$HOME/overnight/run-overnight\"
+alias aider-gemini=\"\$HOME/overnight/aider --model gemini --yes\"
+alias aider-quick=\"\$HOME/overnight/aider --model gemini --yes --message\"
+"
 
     if ! grep -q "Aider Overnight" ~/.bashrc 2>/dev/null; then
-        echo "$ALIAS_BLOCK" >> ~/.bashrc
-        echo_status "Added aliases to ~/.bashrc"
+        echo "$SHELL_BLOCK" >> ~/.bashrc
+        echo_status "Added PATH and aliases to ~/.bashrc"
     else
-        echo_status "Aliases already exist in ~/.bashrc"
+        echo_status "Shell config already exists in ~/.bashrc"
     fi
 
     # Also add to .zshrc if it exists
     if [ -f ~/.zshrc ]; then
         if ! grep -q "Aider Overnight" ~/.zshrc 2>/dev/null; then
-            echo "$ALIAS_BLOCK" >> ~/.zshrc
-            echo_status "Added aliases to ~/.zshrc"
+            echo "$SHELL_BLOCK" >> ~/.zshrc
+            echo_status "Added PATH and aliases to ~/.zshrc"
         fi
     fi
 }
 
-# Verify Gemini connection
-verify_gemini() {
-    echo_status "Verifying Gemini API connection..."
+#------------------------------------------------------------------------------
+# STEP 8: Verify Installation
+#------------------------------------------------------------------------------
+verify_installation() {
+    echo_status "Verifying installation..."
+
+    # Activate and test
+    source "$VENV_DIR/bin/activate"
+
+    # Check aider
+    if ! command -v aider &> /dev/null; then
+        echo_error "Aider not found in PATH"
+        exit 1
+    fi
+
+    # Check psutil (needed for overnight.py)
+    if ! python3 -c "import psutil" 2>/dev/null; then
+        echo_error "psutil not installed"
+        exit 1
+    fi
+
+    echo_status "All components verified"
+    deactivate
+}
+
+#------------------------------------------------------------------------------
+# STEP 9: Test Gemini Connection (Optional)
+#------------------------------------------------------------------------------
+test_gemini() {
+    echo_status "Testing Gemini API connection..."
 
     if [ -z "$GEMINI_API_KEY" ]; then
-        echo_warn "GEMINI_API_KEY not set, skipping verification"
+        echo_warn "GEMINI_API_KEY not set, skipping test"
         return
     fi
 
@@ -186,79 +275,97 @@ verify_gemini() {
     TEMP_DIR=$(mktemp -d)
     cd "$TEMP_DIR"
     git init -q
+    git config user.email "test@test.com"
+    git config user.name "Test"
     echo "# Test" > README.md
     git add README.md
     git commit -q -m "Initial commit"
 
-    # Test aider with a simple message
-    echo_status "Testing Aider with Gemini (this may take a moment)..."
-    if timeout 60 aider --model gemini --yes --message "Say 'Hello, Aider is working!' and nothing else" --no-auto-commits 2>&1 | grep -qi "hello"; then
-        echo_status "Gemini API connection verified successfully!"
+    # Activate venv and test
+    source "$VENV_DIR/bin/activate"
+
+    echo_status "Sending test request to Gemini (this may take a moment)..."
+    if timeout 120 aider --model gemini --yes --no-auto-commits --message "Reply with exactly: AIDER_TEST_OK" 2>&1 | grep -q "AIDER_TEST_OK\|OK\|working"; then
+        echo_status "Gemini API connection verified!"
     else
-        echo_warn "Could not verify Gemini connection. Please check your API key."
+        echo_warn "Could not verify Gemini connection. Check your API key."
+        echo_warn "You can test manually with: aider --model gemini"
     fi
 
+    deactivate
+
     # Cleanup
-    cd -
+    cd "$HOME"
     rm -rf "$TEMP_DIR"
 }
 
-# Print summary
+#------------------------------------------------------------------------------
+# Print Summary
+#------------------------------------------------------------------------------
 print_summary() {
     echo ""
     echo "=============================================="
-    echo "  Aider + Gemini Setup Complete!"
+    echo "  Setup Complete!"
     echo "=============================================="
     echo ""
+    echo "IMPORTANT: Run this to load the new settings:"
+    echo "  source ~/.bashrc"
+    echo ""
     echo "Quick Start:"
-    echo "  # Interactive mode"
-    echo "  cd ~/projects/your-project"
-    echo "  aider --model gemini"
+    echo ""
+    echo "  # Test aider interactively"
+    echo "  cd ~/projects/my-app"
+    echo "  git init"
+    echo "  ~/overnight/aider --model gemini"
     echo ""
     echo "  # Single task (non-interactive)"
-    echo "  aider --model gemini --yes --message 'Add a login feature'"
+    echo "  ~/overnight/aider --model gemini --yes -m 'Add hello world'"
     echo ""
     echo "  # Overnight run"
-    echo "  overnight --project ~/projects/your-project --tasks tasks.md"
+    echo "  ~/overnight/run-overnight --project ~/projects/my-app --tasks tasks.md"
     echo ""
-    echo "Files created:"
-    echo "  - $OVERNIGHT_DIR/overnight.py (main runner)"
-    echo "  - $OVERNIGHT_DIR/templates/ (templates)"
-    echo "  - $CONFIG_DIR/.aider.conf.yml (global config)"
+    echo "Files:"
+    echo "  $OVERNIGHT_DIR/aider         - Aider wrapper (uses venv)"
+    echo "  $OVERNIGHT_DIR/run-overnight - Overnight runner wrapper"
+    echo "  $OVERNIGHT_DIR/overnight.py  - Main overnight script"
+    echo "  $OVERNIGHT_DIR/venv/         - Python virtual environment"
     echo ""
     echo "Next steps:"
-    echo "  1. Source your shell config: source ~/.bashrc"
-    echo "  2. Create a project: mkdir ~/projects/my-app && cd ~/projects/my-app && git init"
-    echo "  3. Add CONVENTIONS.md to your project for context"
-    echo "  4. Create a tasks.md file with your overnight tasks"
-    echo "  5. Run: overnight --project ~/projects/my-app --tasks tasks.md"
-    echo ""
-    echo "Model strings for reference:"
-    echo "  - gemini          -> Gemini 2.5 Pro (default)"
-    echo "  - gemini-exp      -> Gemini 2.5 Pro Experimental (free tier)"
-    echo "  - gemini/gemini-2.5-flash -> Gemini 2.5 Flash (faster, cheaper)"
+    echo "  1. source ~/.bashrc"
+    echo "  2. Create a test project:"
+    echo "     mkdir -p ~/projects/test && cd ~/projects/test && git init"
+    echo "  3. Test aider:"
+    echo "     ~/overnight/aider --model gemini"
     echo ""
 }
 
+#------------------------------------------------------------------------------
 # Main
+#------------------------------------------------------------------------------
 main() {
     echo "=============================================="
     echo "  Aider + Gemini Overnight Setup"
+    echo "  For Fresh Ubuntu Installation"
     echo "=============================================="
     echo ""
 
-    check_system
-    install_aider
-    configure_gemini
+    # Run all setup steps
+    install_system_deps
     create_directories
+    setup_venv_and_aider
+    create_wrapper_scripts
+    configure_gemini
     create_aider_config
-    create_aliases
+    setup_shell
+    verify_installation
 
-    # Optional verification
-    read -p "Would you like to verify the Gemini connection? [y/N] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        verify_gemini
+    # Optional: Test Gemini connection
+    if [ -n "$GEMINI_API_KEY" ]; then
+        read -p "Would you like to test the Gemini API connection? [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            test_gemini
+        fi
     fi
 
     print_summary
