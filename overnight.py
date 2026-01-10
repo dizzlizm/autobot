@@ -38,6 +38,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_DIR = SCRIPT_DIR / "logs"
 REPORT_DIR = SCRIPT_DIR / "reports"
 AIDER_CMD = SCRIPT_DIR / "aider"  # Use the wrapper script that activates venv
+SMART_TEST = SCRIPT_DIR / "tools" / "smart-test" / "smart-test.py"  # Auto-detect testing
 
 
 @dataclass
@@ -368,16 +369,24 @@ class OvernightRunner:
             return False, str(e)
 
     def run_tests(self) -> tuple[bool, str]:
-        """Run the test command if configured."""
-        if not self.test_cmd:
-            return True, ""  # No tests configured, assume pass
-        return self.run_command(self.test_cmd, "Tests")
+        """Run the test command - auto-detects if not specified."""
+        if self.test_cmd:
+            return self.run_command(self.test_cmd, "Tests")
+        # Auto-detect using smart-test
+        if SMART_TEST.exists():
+            cmd = f"python3 {SMART_TEST} test {self.project_path}"
+            return self.run_command(cmd, "Tests (auto-detected)")
+        return True, ""  # No test tool available
 
     def run_lint(self) -> tuple[bool, str]:
-        """Run the lint command if configured."""
-        if not self.lint_cmd:
-            return True, ""  # No lint configured, assume pass
-        return self.run_command(self.lint_cmd, "Lint")
+        """Run the lint command - auto-detects if not specified."""
+        if self.lint_cmd:
+            return self.run_command(self.lint_cmd, "Lint")
+        # Auto-detect using smart-test
+        if SMART_TEST.exists():
+            cmd = f"python3 {SMART_TEST} lint {self.project_path}"
+            return self.run_command(cmd, "Lint (auto-detected)")
+        return True, ""  # No lint tool available
 
     def run_aider_fix(self, error_output: str, fix_type: str) -> bool:
         """Ask Aider to fix test/lint failures."""
@@ -417,8 +426,7 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
 
     def validate_task(self, task: Task) -> bool:
         """Run tests and lint after a task, attempt fixes if needed."""
-        if not self.test_cmd and not self.lint_cmd:
-            return True  # Nothing to validate
+        # Always try validation - smart-test will auto-detect if no cmds specified
 
         for attempt in range(self.fix_retries + 1):
             all_passed = True
