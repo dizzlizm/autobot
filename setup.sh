@@ -1,6 +1,13 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Aider + Gemini Overnight Automation Setup Script
 # This script installs EVERYTHING needed on a fresh Ubuntu machine
+
+# Ensure we're running in bash, not sh
+if [ -z "$BASH_VERSION" ]; then
+    echo "Error: This script must be run with bash, not sh"
+    echo "Run it with: bash $0"
+    exit 1
+fi
 
 set -e
 
@@ -89,7 +96,7 @@ setup_venv_and_aider() {
     fi
 
     # Activate venv
-    source "$VENV_DIR/bin/activate"
+    . "$VENV_DIR/bin/activate"
 
     # Upgrade pip
     echo_status "Upgrading pip..."
@@ -121,7 +128,7 @@ create_wrapper_scripts() {
     cat > "$OVERNIGHT_DIR/aider" << EOF
 #!/bin/bash
 # Wrapper script to run aider from the virtual environment
-source "$VENV_DIR/bin/activate"
+. "$VENV_DIR/bin/activate"
 exec aider "\$@"
 EOF
     chmod +x "$OVERNIGHT_DIR/aider"
@@ -130,7 +137,7 @@ EOF
     cat > "$OVERNIGHT_DIR/run-overnight" << EOF
 #!/bin/bash
 # Wrapper script to run overnight.py from the virtual environment
-source "$VENV_DIR/bin/activate"
+. "$VENV_DIR/bin/activate"
 exec python3 "$OVERNIGHT_DIR/overnight.py" "\$@"
 EOF
     chmod +x "$OVERNIGHT_DIR/run-overnight"
@@ -242,7 +249,7 @@ verify_installation() {
     echo_status "Verifying installation..."
 
     # Activate and test
-    source "$VENV_DIR/bin/activate"
+    . "$VENV_DIR/bin/activate"
 
     # Check aider
     if ! command -v aider &> /dev/null; then
@@ -282,7 +289,7 @@ test_gemini() {
     git commit -q -m "Initial commit"
 
     # Activate venv and test
-    source "$VENV_DIR/bin/activate"
+    . "$VENV_DIR/bin/activate"
 
     echo_status "Sending test request to Gemini (this may take a moment)..."
     if timeout 120 aider --model gemini --yes --no-auto-commits --message "Reply with exactly: AIDER_TEST_OK" 2>&1 | grep -q "AIDER_TEST_OK\|OK\|working"; then
