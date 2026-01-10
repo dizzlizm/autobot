@@ -500,16 +500,39 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
             return True
 
         try:
-            # Run Aider with timeout
-            result = subprocess.run(
+            # Run Aider with real-time output streaming
+            self.log(f"Running: {' '.join(cmd[:4])}...")
+            print("-" * 40)
+
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=self.timeout,
                 cwd=self.project_path
             )
 
-            task.aider_output = result.stdout + "\n" + result.stderr
+            output_lines = []
+            start = time.time()
+
+            # Stream output in real-time
+            while True:
+                # Check timeout
+                if time.time() - start > self.timeout:
+                    process.kill()
+                    raise subprocess.TimeoutExpired(cmd, self.timeout)
+
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    print(f"  {line.rstrip()}")  # Show real-time
+                    output_lines.append(line)
+
+            # Get return code
+            returncode = process.returncode
+            task.aider_output = "".join(output_lines)
+            print("-" * 40)
 
             # Parse usage from output
             usage = self.parse_usage(task.aider_output)
@@ -521,12 +544,12 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
             new_commits = self.get_commits_since(commit_before)
             task.commits = new_commits
 
-            if result.returncode == 0 or new_commits:
+            if returncode == 0 or new_commits:
                 # Aider completed (or made progress)
                 usage_str = f", {usage.tokens_sent + usage.tokens_received:,} tokens, ${usage.cost:.4f}" if usage.tokens_sent else ""
                 self.log(f"Task {task.id} aider done with {len(new_commits)} commits{usage_str}")
 
-                if result.returncode != 0:
+                if returncode != 0:
                     self.state.warnings.append(f"Task {task.id}: Aider returned non-zero exit code")
 
                 # Run validation (tests/lint)
@@ -538,11 +561,8 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
                     self.log(f"Task {task.id} completed but validation failed", "WARN")
             else:
                 task.status = "failed"
-                task.error = f"Aider exited with code {result.returncode}"
+                task.error = f"Aider exited with code {returncode}"
                 self.log(f"Task {task.id} failed: {task.error}", "ERROR")
-                # Show aider output for debugging
-                if task.aider_output.strip():
-                    self.log(f"Aider output:\n{task.aider_output[:2000]}", "DEBUG")
 
         except subprocess.TimeoutExpired:
             task.status = "failed"
