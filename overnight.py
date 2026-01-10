@@ -27,7 +27,7 @@ import psutil
 
 
 # Configuration
-DEFAULT_MODEL = "ollama/qwen2.5-coder:7b"  # Local Ollama model (no API key needed)
+DEFAULT_MODEL = "ollama/qwen2.5-coder:3b"  # Local Ollama model (no API key needed)
 DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
@@ -39,6 +39,50 @@ LOG_DIR = SCRIPT_DIR / "logs"
 REPORT_DIR = SCRIPT_DIR / "reports"
 AIDER_CMD = SCRIPT_DIR / "aider"  # Use the wrapper script that activates venv
 SMART_TEST = SCRIPT_DIR / "tools" / "smart-test" / "smart-test.py"  # Auto-detect testing
+
+# Smart prompting for smaller models (3B-7B)
+# Provides chain-of-thought structure and explicit guidance
+SMART_PROMPT_TEMPLATE = """## Task
+{title}
+
+## Details
+{description}
+
+## Instructions
+Think step-by-step:
+1. First, identify which files need to be modified
+2. Understand the existing code patterns in those files
+3. Plan the minimal changes needed
+4. Implement changes one file at a time
+5. Ensure code follows existing style and conventions
+
+## Requirements
+- Make minimal, focused changes
+- Follow existing code patterns in this project
+- Keep the same formatting and style
+- Do NOT add unnecessary comments or docstrings
+- Do NOT refactor unrelated code
+- Test your changes mentally before committing
+
+Now implement the task."""
+
+
+def enhance_prompt_for_small_model(title: str, description: str, model: str) -> str:
+    """Wrap task in structured prompt for better small model performance.
+
+    Smaller models (3B-7B) benefit from:
+    - Clear step-by-step instructions
+    - Explicit constraints
+    - Chain-of-thought prompting
+    """
+    # Only apply enhanced prompting for small models
+    is_small_model = any(size in model.lower() for size in [":3b", ":1b", ":0.5b", "-3b", "-1b"])
+
+    if is_small_model:
+        return SMART_PROMPT_TEMPLATE.format(title=title, description=description)
+    else:
+        # Larger models get simpler prompts
+        return f"{title}\n\n{description}"
 
 
 @dataclass
@@ -404,11 +448,19 @@ class OvernightRunner:
         if len(error_output) > 4000:
             error_output = error_output[:4000] + "\n...(truncated)"
 
-        fix_message = f"""Fix the following {fix_type} failures:
+        fix_message = f"""## Fix {fix_type.title()} Failures
 
+## Error Output
 {error_output}
 
-Please analyze the errors and fix the code to make {fix_type} pass."""
+## Instructions
+1. Read each error message carefully
+2. Identify the exact file and line number
+3. Understand what the error is asking for
+4. Make the minimal fix needed
+5. Do NOT change unrelated code
+
+Fix only what is broken. Keep changes minimal."""
 
         cmd = [
             str(AIDER_CMD),
@@ -479,8 +531,8 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
         self.wait_for_ram()
 
         # Build the Aider command
-        # Combine title and description for the message
-        message = f"{task.title}\n\n{task.description}"
+        # Use smart prompting for smaller models
+        message = enhance_prompt_for_small_model(task.title, task.description, self.model)
 
         cmd = [
             str(AIDER_CMD),  # Use wrapper script that activates venv

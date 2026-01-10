@@ -157,9 +157,22 @@ interface ApiResponse<T> {
 
 ## Notes for AI
 
-- When adding new features, check for similar existing implementations first
-- Prefer modifying existing files over creating new ones
-- Always run `npm run typecheck` and `npm run test` after changes
-- If you're unsure about a pattern, follow what's already in the codebase
-- Don't add comments that just restate what the code does
-- Don't add try/catch blocks unless there's meaningful error handling
+### Critical Rules
+- **ONE TASK AT A TIME**: Focus only on the current task
+- **MINIMAL CHANGES**: Change only what is necessary
+- **FOLLOW PATTERNS**: Copy existing code patterns exactly
+- **NO EXTRAS**: Do not add comments, docstrings, or type hints unless asked
+
+### Step-by-Step Approach
+1. Read the existing file first
+2. Find similar code to use as reference
+3. Make the smallest change that works
+4. Verify the change matches existing style
+
+### Do NOT
+- Add comments that explain obvious code
+- Refactor code you weren't asked to change
+- Add error handling unless specifically needed
+- Create new files when you can modify existing ones
+- Add type annotations to files that don't have them
+- Change formatting or whitespace

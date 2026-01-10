@@ -137,12 +137,12 @@ configure_ollama() {
         fi
     fi
 
-    # Pull the default model (qwen2.5-coder:7b)
-    echo_status "Pulling qwen2.5-coder:7b model (this may take a while)..."
-    if ollama pull qwen2.5-coder:7b; then
-        echo_status "Model qwen2.5-coder:7b ready"
+    # Pull the default model (qwen2.5-coder:3b)
+    echo_status "Pulling qwen2.5-coder:3b model (this may take a while)..."
+    if ollama pull qwen2.5-coder:3b; then
+        echo_status "Model qwen2.5-coder:3b ready"
     else
-        echo_warn "Failed to pull model. Run manually: ollama pull qwen2.5-coder:7b"
+        echo_warn "Failed to pull model. Run manually: ollama pull qwen2.5-coder:3b"
     fi
 }
 
@@ -154,7 +154,7 @@ create_aider_config() {
 
     mkdir -p "$CONFIG_DIR"
     cat > "$CONFIG_DIR/.aider.conf.yml" << 'EOF'
-model: ollama/qwen2.5-coder:7b
+model: ollama/qwen2.5-coder:3b
 auto-commits: true
 dirty-commits: true
 stream: false
