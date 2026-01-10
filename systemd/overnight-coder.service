@@ -1,0 +1,40 @@
+[Unit]
+Description=Overnight Coding Automation with Aider + Gemini
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+Group=%i
+
+# Set working directory and environment
+WorkingDirectory=%h
+Environment="HOME=%h"
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Load environment file with API keys
+EnvironmentFile=%h/overnight/.env
+
+# The main command - customize project and tasks paths
+ExecStart=%h/.local/bin/python3 %h/overnight/overnight.py \
+    --project %h/projects/default \
+    --tasks %h/projects/default/tasks.md \
+    --report %h/reports/overnight_%%Y%%m%%d.md
+
+# Timeout after 8 hours (overnight run)
+TimeoutStartSec=28800
+
+# Restart policy (don't restart on failure for scheduled runs)
+Restart=no
+
+# Resource limits
+MemoryMax=6G
+CPUQuota=80%
+
+# Logging
+StandardOutput=append:%h/overnight/logs/systemd.log
+StandardError=append:%h/overnight/logs/systemd.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,122 @@
+# Aider Configuration for Project
+# Copy this to your project root as .aider.conf.yml
+# See: https://aider.chat/docs/config/aider_conf.html
+
+#------------------------------------------------------------------------------
+# Model Settings
+#------------------------------------------------------------------------------
+
+# Default model (gemini points to gemini-2.5-pro)
+model: gemini
+
+# Alternative models:
+# model: gemini/gemini-2.5-flash      # Faster, cheaper
+# model: gemini-exp                   # Experimental (free tier limits)
+# model: openrouter/google/gemini-2.5-pro  # Via OpenRouter
+
+# Thinking tokens (for Gemini 2.5)
+# think-tokens: 8k
+
+#------------------------------------------------------------------------------
+# Git Settings
+#------------------------------------------------------------------------------
+
+# Automatically commit changes (default: true)
+auto-commits: true
+
+# Commit even when repo has uncommitted changes
+dirty-commits: true
+
+# Attribute commits to aider
+attribute-author: true
+attribute-committer: true
+
+# Git commit message style
+# attribute-commit-message-author: true
+# attribute-commit-message-committer: true
+
+#------------------------------------------------------------------------------
+# Context Files
+#------------------------------------------------------------------------------
+
+# Load project conventions as read-only context
+read:
+  - CONVENTIONS.md
+  # - docs/architecture.md
+  # - docs/api-spec.md
+
+# Files to always include in context (editable)
+# file:
+#   - src/types/index.ts
+#   - src/config.ts
+
+#------------------------------------------------------------------------------
+# Behavior Settings
+#------------------------------------------------------------------------------
+
+# Don't stream output (better for logs/scripts)
+stream: false
+
+# Show diffs of changes
+show-diffs: true
+
+# Don't check for aider updates
+check-update: false
+
+# Auto-accept all prompts (for overnight use)
+# WARNING: Only enable this for trusted, unattended runs
+# yes: true
+
+#------------------------------------------------------------------------------
+# Editor Integration
+#------------------------------------------------------------------------------
+
+# Editor command for manual editing (when aider opens files for you)
+# editor: code --wait
+# editor: vim
+# editor: nano
+
+#------------------------------------------------------------------------------
+# Map Settings (for large projects)
+#------------------------------------------------------------------------------
+
+# Enable repository map for better context
+map-tokens: 1024
+
+# Refresh map when files change
+map-refresh: auto
+
+#------------------------------------------------------------------------------
+# Lint/Test Settings
+#------------------------------------------------------------------------------
+
+# Run lint after changes
+# lint-cmd: npm run lint
+# lint-cmd: ruff check --fix
+
+# Run tests after changes
+# test-cmd: npm test
+# test-cmd: pytest
+
+# Auto-fix lint errors
+# auto-lint: true
+
+#------------------------------------------------------------------------------
+# File Patterns
+#------------------------------------------------------------------------------
+
+# Files to ignore (never edit or read)
+# aiderignore: .aiderignore
+
+#------------------------------------------------------------------------------
+# Advanced Settings
+#------------------------------------------------------------------------------
+
+# Max tokens for chat history
+# max-chat-history-tokens: 8000
+
+# Timeout for API calls (seconds)
+# timeout: 600
+
+# Verbose output for debugging
+# verbose: true
