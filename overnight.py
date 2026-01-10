@@ -32,8 +32,26 @@ DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
 STATE_FILE = "overnight_state.json"
-LOG_DIR = Path.home() / "overnight" / "logs"
-REPORT_DIR = Path.home() / "reports"
+
+# Use script directory for logs/reports
+SCRIPT_DIR = Path(__file__).parent.resolve()
+LOG_DIR = SCRIPT_DIR / "logs"
+REPORT_DIR = SCRIPT_DIR / "reports"
+
+
+@dataclass
+class Usage:
+    """Tracks token usage and cost."""
+    tokens_sent: int = 0
+    tokens_received: int = 0
+    cost: float = 0.0
+
+    def __add__(self, other):
+        return Usage(
+            tokens_sent=self.tokens_sent + other.tokens_sent,
+            tokens_received=self.tokens_received + other.tokens_received,
+            cost=self.cost + other.cost
+        )
 
 
 @dataclass
@@ -49,6 +67,9 @@ class Task:
     commits: list = field(default_factory=list)
     error: Optional[str] = None
     aider_output: str = ""
+    tokens_sent: int = 0
+    tokens_received: int = 0
+    cost: float = 0.0
 
 
 @dataclass
@@ -129,8 +150,8 @@ class OvernightRunner:
 
         # Check API key
         if not os.environ.get("GEMINI_API_KEY"):
-            # Try loading from .env
-            env_file = Path.home() / "overnight" / ".env"
+            # Try loading from .env in script directory
+            env_file = SCRIPT_DIR / ".env"
             if env_file.exists():
                 with open(env_file) as f:
                     for line in f:
@@ -263,6 +284,56 @@ class OvernightRunner:
         )
         return result.stdout.strip()
 
+    def parse_usage(self, output: str) -> Usage:
+        """Parse token usage and cost from aider output."""
+        usage = Usage()
+
+        # Match patterns like:
+        # "Tokens: 12k sent, 1.5k received"
+        # "Tokens: 12,345 sent, 1,234 received"
+        # "Cost: $0.01"
+
+        # Parse tokens
+        token_pattern = r'Tokens?:\s*([\d,.]+)k?\s*sent,?\s*([\d,.]+)k?\s*received'
+        token_match = re.search(token_pattern, output, re.IGNORECASE)
+        if token_match:
+            sent_str = token_match.group(1).replace(',', '')
+            recv_str = token_match.group(2).replace(',', '')
+
+            # Handle k suffix
+            if 'k' in token_match.group(0).lower():
+                try:
+                    usage.tokens_sent = int(float(sent_str) * 1000)
+                    usage.tokens_received = int(float(recv_str) * 1000)
+                except ValueError:
+                    pass
+            else:
+                try:
+                    usage.tokens_sent = int(float(sent_str))
+                    usage.tokens_received = int(float(recv_str))
+                except ValueError:
+                    pass
+
+        # Parse cost
+        cost_pattern = r'Cost:\s*\$?([\d.]+)'
+        cost_match = re.search(cost_pattern, output, re.IGNORECASE)
+        if cost_match:
+            try:
+                usage.cost = float(cost_match.group(1))
+            except ValueError:
+                pass
+
+        # Also look for cumulative session cost patterns
+        session_cost_pattern = r'session\s+cost:\s*\$?([\d.]+)'
+        session_match = re.search(session_cost_pattern, output, re.IGNORECASE)
+        if session_match:
+            try:
+                usage.cost = max(usage.cost, float(session_match.group(1)))
+            except ValueError:
+                pass
+
+        return usage
+
     def run_aider_task(self, task: Task) -> bool:
         """Run Aider for a single task."""
         self.log(f"Starting task {task.id}: {task.title}")
@@ -285,6 +356,7 @@ class OvernightRunner:
             "--yes",  # Auto-accept all prompts
             "--auto-commits",  # Auto-commit changes
             "--no-stream",  # Don't stream output (better for logs)
+            "--show-cost",  # Show token usage and cost
             "--message", message,
         ]
 
@@ -316,13 +388,20 @@ class OvernightRunner:
 
             task.aider_output = result.stdout + "\n" + result.stderr
 
+            # Parse usage from output
+            usage = self.parse_usage(task.aider_output)
+            task.tokens_sent = usage.tokens_sent
+            task.tokens_received = usage.tokens_received
+            task.cost = usage.cost
+
             # Check for commits made during this task
             new_commits = self.get_commits_since(commit_before)
             task.commits = new_commits
 
             if result.returncode == 0:
                 task.status = "completed"
-                self.log(f"Task {task.id} completed with {len(new_commits)} commits")
+                usage_str = f", {usage.tokens_sent + usage.tokens_received:,} tokens, ${usage.cost:.4f}" if usage.tokens_sent else ""
+                self.log(f"Task {task.id} completed with {len(new_commits)} commits{usage_str}")
             else:
                 # Aider returned non-zero but may have made partial progress
                 if new_commits:
@@ -408,6 +487,12 @@ class OvernightRunner:
         failed = sum(1 for t in self.state.tasks if t.status == "failed")
         total_commits = sum(len(t.commits) for t in self.state.tasks)
 
+        # Calculate usage totals
+        total_tokens_sent = sum(t.tokens_sent for t in self.state.tasks)
+        total_tokens_received = sum(t.tokens_received for t in self.state.tasks)
+        total_tokens = total_tokens_sent + total_tokens_received
+        total_cost = sum(t.cost for t in self.state.tasks)
+
         report_lines = [
             f"# Overnight Report - {now.strftime('%Y-%m-%d')}",
             "",
@@ -416,6 +501,12 @@ class OvernightRunner:
             f"- **Tasks**: {completed}/{len(self.state.tasks)} completed",
             f"- **Commits**: {total_commits}",
             f"- **Branch**: `{self.branch}`",
+            "",
+            "## Usage & Cost",
+            f"- **Tokens sent**: {total_tokens_sent:,}",
+            f"- **Tokens received**: {total_tokens_received:,}",
+            f"- **Total tokens**: {total_tokens:,}",
+            f"- **Total cost**: ${total_cost:.4f}",
             "",
             "## Results",
         ]
@@ -436,6 +527,8 @@ class OvernightRunner:
                 duration_str = f" ({mins}m {secs}s"
                 if task.commits:
                     duration_str += f", {len(task.commits)} commits"
+                if task.cost > 0:
+                    duration_str += f", ${task.cost:.4f}"
                 duration_str += ")"
 
             error_info = ""
@@ -559,11 +652,17 @@ class OvernightRunner:
 
         self.log(f"Report saved to: {report_path}")
 
+        # Calculate final usage
+        total_tokens = sum(t.tokens_sent + t.tokens_received for t in self.state.tasks)
+        total_cost = sum(t.cost for t in self.state.tasks)
+
         # Print summary
         self.log("=" * 60)
         self.log("Session Complete!")
         self.log(f"Completed: {self.state.completed_count}/{len(self.state.tasks)} tasks")
         self.log(f"Total commits: {self.state.total_commits}")
+        self.log(f"Total tokens: {total_tokens:,}")
+        self.log(f"Total cost: ${total_cost:.4f}")
         self.log(f"Report: {report_path}")
         self.log("=" * 60)
 
