@@ -357,7 +357,6 @@ class OvernightRunner:
             "--yes",  # Auto-accept all prompts
             "--auto-commits",  # Auto-commit changes
             "--no-stream",  # Don't stream output (better for logs)
-            "--show-cost",  # Show token usage and cost
             "--message", message,
         ]
 
