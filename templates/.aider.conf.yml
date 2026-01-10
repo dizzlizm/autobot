@@ -6,16 +6,18 @@
 # Model Settings
 #------------------------------------------------------------------------------
 
-# Default model (gemini points to gemini-2.5-pro)
-model: gemini
+# Default model - Ollama with qwen2.5-coder:7b (local, no API key needed)
+model: ollama/qwen2.5-coder:7b
 
-# Alternative models:
-# model: gemini/gemini-2.5-flash      # Faster, cheaper
-# model: gemini-exp                   # Experimental (free tier limits)
-# model: openrouter/google/gemini-2.5-pro  # Via OpenRouter
+# Alternative Ollama models:
+# model: ollama/codellama:7b          # Meta's coding model
+# model: ollama/deepseek-coder:6.7b   # DeepSeek coding model
+# model: ollama/mistral:7b            # General purpose
+# model: ollama/llama3.1:8b           # Meta Llama 3.1
 
-# Thinking tokens (for Gemini 2.5)
-# think-tokens: 8k
+# Cloud models (require API keys):
+# model: gemini                       # Gemini 2.5 Pro (GEMINI_API_KEY)
+# model: gpt-4o                       # OpenAI GPT-4o (OPENAI_API_KEY)
 
 #------------------------------------------------------------------------------
 # Git Settings

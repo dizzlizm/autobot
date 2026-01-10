@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Overnight Coding Automation with Aider + Gemini
+Overnight Coding Automation with Aider + Ollama
 
 This script wraps Aider to enable unattended overnight coding sessions.
 It handles task parsing, sequential execution, error recovery, and reporting.
@@ -27,7 +27,7 @@ import psutil
 
 
 # Configuration
-DEFAULT_MODEL = "gemini"  # Points to gemini-2.5-pro
+DEFAULT_MODEL = "ollama/qwen2.5-coder:7b"  # Local Ollama model (no API key needed)
 DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
@@ -156,19 +156,22 @@ class OvernightRunner:
         if not AIDER_CMD.exists():
             errors.append(f"Aider wrapper not found at {AIDER_CMD}")
 
-        # Check API key
-        if not os.environ.get("GEMINI_API_KEY"):
-            # Try loading from .env in script directory
-            env_file = SCRIPT_DIR / ".env"
-            if env_file.exists():
-                with open(env_file) as f:
-                    for line in f:
-                        if line.startswith("GEMINI_API_KEY="):
-                            os.environ["GEMINI_API_KEY"] = line.split("=", 1)[1].strip()
-                            break
+        # Check for Ollama (local models don't need API keys)
+        # Only check API key if using a cloud model
+        if self.model and not self.model.startswith("ollama/"):
+            if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
+                # Try loading from .env in script directory
+                env_file = SCRIPT_DIR / ".env"
+                if env_file.exists():
+                    with open(env_file) as f:
+                        for line in f:
+                            if line.startswith("GEMINI_API_KEY="):
+                                os.environ["GEMINI_API_KEY"] = line.split("=", 1)[1].strip()
+                            elif line.startswith("OPENAI_API_KEY="):
+                                os.environ["OPENAI_API_KEY"] = line.split("=", 1)[1].strip()
 
-            if not os.environ.get("GEMINI_API_KEY"):
-                errors.append("GEMINI_API_KEY environment variable not set")
+                if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
+                    errors.append("No API key found (GEMINI_API_KEY or OPENAI_API_KEY) - not needed for Ollama models")
 
         # Check git status (should be clean)
         os.chdir(self.project_path)
@@ -831,7 +834,7 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Overnight coding automation with Aider + Gemini",
+        description="Overnight coding automation with Aider + Ollama",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
