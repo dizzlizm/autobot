@@ -102,6 +102,9 @@ class OvernightRunner:
         dry_run: bool = False,
         resume: bool = False,
         report_path: Optional[str] = None,
+        test_cmd: Optional[str] = None,
+        lint_cmd: Optional[str] = None,
+        fix_retries: int = 2,
     ):
         self.project_path = Path(project_path).resolve()
         self.tasks_file = Path(tasks_file).resolve()
@@ -111,6 +114,9 @@ class OvernightRunner:
         self.dry_run = dry_run
         self.resume = resume
         self.report_path = Path(report_path) if report_path else None
+        self.test_cmd = test_cmd
+        self.lint_cmd = lint_cmd
+        self.fix_retries = fix_retries  # How many times to retry if tests fail
 
         self.state: Optional[OvernightState] = None
         self.log_file: Optional[Path] = None
@@ -335,6 +341,115 @@ class OvernightRunner:
 
         return usage
 
+    def run_command(self, cmd: str, description: str) -> tuple[bool, str]:
+        """Run a shell command and return (success, output)."""
+        self.log(f"Running {description}: {cmd}")
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 min timeout for tests/lint
+                cwd=self.project_path
+            )
+            output = result.stdout + "\n" + result.stderr
+            success = result.returncode == 0
+            if success:
+                self.log(f"{description} passed")
+            else:
+                self.log(f"{description} failed (exit code {result.returncode})", "WARN")
+            return success, output
+        except subprocess.TimeoutExpired:
+            self.log(f"{description} timed out", "ERROR")
+            return False, "Command timed out"
+        except Exception as e:
+            self.log(f"{description} error: {e}", "ERROR")
+            return False, str(e)
+
+    def run_tests(self) -> tuple[bool, str]:
+        """Run the test command if configured."""
+        if not self.test_cmd:
+            return True, ""  # No tests configured, assume pass
+        return self.run_command(self.test_cmd, "Tests")
+
+    def run_lint(self) -> tuple[bool, str]:
+        """Run the lint command if configured."""
+        if not self.lint_cmd:
+            return True, ""  # No lint configured, assume pass
+        return self.run_command(self.lint_cmd, "Lint")
+
+    def run_aider_fix(self, error_output: str, fix_type: str) -> bool:
+        """Ask Aider to fix test/lint failures."""
+        self.log(f"Asking Aider to fix {fix_type} failures...")
+
+        # Truncate error output if too long
+        if len(error_output) > 4000:
+            error_output = error_output[:4000] + "\n...(truncated)"
+
+        fix_message = f"""Fix the following {fix_type} failures:
+
+{error_output}
+
+Please analyze the errors and fix the code to make {fix_type} pass."""
+
+        cmd = [
+            str(AIDER_CMD),
+            "--model", self.model,
+            "--yes",
+            "--auto-commits",
+            "--no-stream",
+            "--message", fix_message,
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                cwd=self.project_path
+            )
+            return result.returncode == 0
+        except Exception as e:
+            self.log(f"Aider fix failed: {e}", "ERROR")
+            return False
+
+    def validate_task(self, task: Task) -> bool:
+        """Run tests and lint after a task, attempt fixes if needed."""
+        if not self.test_cmd and not self.lint_cmd:
+            return True  # Nothing to validate
+
+        for attempt in range(self.fix_retries + 1):
+            all_passed = True
+
+            # Run lint first (usually faster)
+            if self.lint_cmd:
+                lint_ok, lint_output = self.run_lint()
+                if not lint_ok:
+                    all_passed = False
+                    if attempt < self.fix_retries:
+                        self.run_aider_fix(lint_output, "lint")
+                        continue
+
+            # Run tests
+            if self.test_cmd:
+                test_ok, test_output = self.run_tests()
+                if not test_ok:
+                    all_passed = False
+                    if attempt < self.fix_retries:
+                        self.run_aider_fix(test_output, "test")
+                        continue
+
+            if all_passed:
+                if attempt > 0:
+                    self.log(f"Validation passed after {attempt} fix attempts")
+                return True
+
+        self.log("Validation failed after all fix attempts", "ERROR")
+        self.state.warnings.append(f"Task {task.id}: Tests/lint failed after {self.fix_retries} fix attempts")
+        return False
+
     def run_aider_task(self, task: Task) -> bool:
         """Run Aider for a single task."""
         self.log(f"Starting task {task.id}: {task.title}")
@@ -398,23 +513,28 @@ class OvernightRunner:
             new_commits = self.get_commits_since(commit_before)
             task.commits = new_commits
 
-            if result.returncode == 0:
-                task.status = "completed"
+            if result.returncode == 0 or new_commits:
+                # Aider completed (or made progress)
                 usage_str = f", {usage.tokens_sent + usage.tokens_received:,} tokens, ${usage.cost:.4f}" if usage.tokens_sent else ""
-                self.log(f"Task {task.id} completed with {len(new_commits)} commits{usage_str}")
-            else:
-                # Aider returned non-zero but may have made partial progress
-                if new_commits:
-                    task.status = "completed"
-                    self.log(f"Task {task.id} completed (with warnings)")
+                self.log(f"Task {task.id} aider done with {len(new_commits)} commits{usage_str}")
+
+                if result.returncode != 0:
                     self.state.warnings.append(f"Task {task.id}: Aider returned non-zero exit code")
+
+                # Run validation (tests/lint)
+                if self.validate_task(task):
+                    task.status = "completed"
+                    self.log(f"Task {task.id} completed and validated")
                 else:
-                    task.status = "failed"
-                    task.error = f"Aider exited with code {result.returncode}"
-                    self.log(f"Task {task.id} failed: {task.error}", "ERROR")
-                    # Show aider output for debugging
-                    if task.aider_output.strip():
-                        self.log(f"Aider output:\n{task.aider_output[:2000]}", "DEBUG")
+                    task.status = "completed"  # Still mark complete but with warnings
+                    self.log(f"Task {task.id} completed but validation failed", "WARN")
+            else:
+                task.status = "failed"
+                task.error = f"Aider exited with code {result.returncode}"
+                self.log(f"Task {task.id} failed: {task.error}", "ERROR")
+                # Show aider output for debugging
+                if task.aider_output.strip():
+                    self.log(f"Aider output:\n{task.aider_output[:2000]}", "DEBUG")
 
         except subprocess.TimeoutExpired:
             task.status = "failed"
@@ -685,17 +805,22 @@ Examples:
     # Basic usage
     overnight.py --project ~/projects/web-app --tasks tasks.md
 
-    # With custom branch
-    overnight.py --project ~/projects/api --tasks sprint.md --branch overnight-sprint-23
+    # With tests - runs 'npm test' after each task, retries 2x if fails
+    overnight.py --project ~/projects/app --tasks tasks.md --test-cmd "npm test"
+
+    # With tests AND linting
+    overnight.py --project ~/projects/app --tasks tasks.md \\
+        --test-cmd "npm test" --lint-cmd "npm run lint"
+
+    # Python project with pytest and ruff
+    overnight.py --project ~/projects/api --tasks tasks.md \\
+        --test-cmd "pytest" --lint-cmd "ruff check ."
 
     # Resume interrupted run
     overnight.py --project ~/projects/web-app --tasks tasks.md --resume
 
     # Dry run (no changes)
     overnight.py --project ~/projects/web-app --tasks tasks.md --dry-run
-
-    # Use Gemini Flash (faster, cheaper)
-    overnight.py --project ~/projects/web-app --tasks tasks.md --model gemini/gemini-2.5-flash
         """
     )
 
@@ -738,6 +863,20 @@ Examples:
         action="store_true",
         help="Show what would be done without making changes"
     )
+    parser.add_argument(
+        "--test-cmd",
+        help="Command to run tests after each task (e.g., 'npm test', 'pytest')"
+    )
+    parser.add_argument(
+        "--lint-cmd",
+        help="Command to run linter after each task (e.g., 'npm run lint', 'ruff check')"
+    )
+    parser.add_argument(
+        "--fix-retries",
+        type=int,
+        default=2,
+        help="Number of times to ask Aider to fix failing tests/lint (default: 2)"
+    )
 
     args = parser.parse_args()
 
@@ -750,6 +889,9 @@ Examples:
         dry_run=args.dry_run,
         resume=args.resume,
         report_path=args.report,
+        test_cmd=args.test_cmd,
+        lint_cmd=args.lint_cmd,
+        fix_retries=args.fix_retries,
     )
 
     # Handle signals for graceful shutdown
