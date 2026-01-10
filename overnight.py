@@ -37,6 +37,7 @@ STATE_FILE = "overnight_state.json"
 SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_DIR = SCRIPT_DIR / "logs"
 REPORT_DIR = SCRIPT_DIR / "reports"
+AIDER_CMD = SCRIPT_DIR / "aider"  # Use the wrapper script that activates venv
 
 
 @dataclass
@@ -144,9 +145,9 @@ class OvernightRunner:
         if not self.tasks_file.exists():
             errors.append(f"Tasks file does not exist: {self.tasks_file}")
 
-        # Check Aider is installed
-        if not shutil.which("aider"):
-            errors.append("Aider is not installed or not in PATH")
+        # Check Aider wrapper exists
+        if not AIDER_CMD.exists():
+            errors.append(f"Aider wrapper not found at {AIDER_CMD}")
 
         # Check API key
         if not os.environ.get("GEMINI_API_KEY"):
@@ -351,7 +352,7 @@ class OvernightRunner:
         message = f"{task.title}\n\n{task.description}"
 
         cmd = [
-            "aider",
+            str(AIDER_CMD),  # Use wrapper script that activates venv
             "--model", self.model,
             "--yes",  # Auto-accept all prompts
             "--auto-commits",  # Auto-commit changes
