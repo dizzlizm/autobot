@@ -5,9 +5,19 @@ Overnight Coding Automation with Aider + Ollama
 This script wraps Aider to enable unattended overnight coding sessions.
 It handles task parsing, sequential execution, error recovery, and reporting.
 
+Features:
+- Hybrid mode: Use Gemini for complex tasks, local Ollama for simple ones
+- Prompt Loop: Ollama iteratively crafts epic prompts before sending to Gemini
+  - Web search integration for best practices & documentation
+  - Self-assessing loop (no artificial limits)
+  - The result: Gemini receives the most comprehensive prompts possible
+
 Usage:
     overnight.py --project ~/projects/web-app --tasks tasks.md
     overnight.py --project ~/projects/api --tasks sprint-23.md --branch overnight-20250111
+
+    # Epic mode: Prompt loop + Hybrid
+    overnight.py --project ~/projects/game --tasks tasks.md --hybrid --prompt-loop
 """
 
 import argparse
@@ -19,6 +29,8 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.request
+import urllib.parse
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -88,6 +100,401 @@ Think step-by-step:
 - Do NOT refactor unrelated code
 
 Now implement the task."""
+
+# Prompt Loop Configuration
+PROMPT_LOOP_MODEL = "ollama/qwen2.5-coder:7b"  # Slightly larger model for prompt engineering
+PROMPT_LOOP_MAX_ITERATIONS = 20  # Safety limit (but model decides when done)
+PROMPT_LOOP_TIMEOUT = 120  # Timeout per iteration in seconds
+
+
+class PromptLoopEngine:
+    """
+    Autonomous prompt engineering engine using local Ollama.
+
+    This engine iteratively refines prompts by:
+    1. Analyzing the task requirements
+    2. Searching the web for best practices, examples, documentation
+    3. Enriching the prompt with technical details
+    4. Self-assessing when the prompt is comprehensive enough
+
+    The loop continues until Ollama decides the prompt is "ready" - no artificial limits.
+    """
+
+    def __init__(self, model: str = PROMPT_LOOP_MODEL, verbose: bool = True):
+        self.model = model.replace("ollama/", "")  # Ollama CLI uses just model name
+        self.verbose = verbose
+        self.search_cache = {}  # Cache web searches
+        self.iteration_history = []  # Track all iterations
+
+    def log(self, message: str, level: str = "LOOP"):
+        """Log prompt loop activity."""
+        if self.verbose:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            print(f"  [{timestamp}] [{level}] {message}")
+
+    def web_search(self, query: str, num_results: int = 5) -> list[dict]:
+        """
+        Search the web using DuckDuckGo (no API key needed).
+        Returns list of {title, url, snippet} dicts.
+        """
+        if query in self.search_cache:
+            return self.search_cache[query]
+
+        self.log(f"Searching: {query}")
+
+        try:
+            # Use DuckDuckGo HTML search (no API needed)
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                html = response.read().decode('utf-8')
+
+            results = []
+            # Parse results from DuckDuckGo HTML
+            # Look for result links and snippets
+            result_pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>'
+            snippet_pattern = r'<a[^>]*class="result__snippet"[^>]*>([^<]*)</a>'
+
+            links = re.findall(result_pattern, html)
+            snippets = re.findall(snippet_pattern, html)
+
+            for i, (link_url, title) in enumerate(links[:num_results]):
+                snippet = snippets[i] if i < len(snippets) else ""
+                # Clean up the URL (DuckDuckGo wraps it)
+                if "uddg=" in link_url:
+                    actual_url = urllib.parse.unquote(link_url.split("uddg=")[-1].split("&")[0])
+                else:
+                    actual_url = link_url
+
+                results.append({
+                    'title': title.strip(),
+                    'url': actual_url,
+                    'snippet': snippet.strip()
+                })
+
+            self.search_cache[query] = results
+            self.log(f"Found {len(results)} results")
+            return results
+
+        except Exception as e:
+            self.log(f"Search failed: {e}", "WARN")
+            return []
+
+    def fetch_url_content(self, url: str, max_chars: int = 5000) -> str:
+        """Fetch and extract text content from a URL."""
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                html = response.read().decode('utf-8', errors='ignore')
+
+            # Simple HTML to text conversion
+            # Remove scripts and styles
+            html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            # Remove HTML tags
+            text = re.sub(r'<[^>]+>', ' ', html)
+            # Clean whitespace
+            text = re.sub(r'\s+', ' ', text).strip()
+
+            return text[:max_chars]
+        except Exception as e:
+            self.log(f"Fetch failed for {url}: {e}", "WARN")
+            return ""
+
+    def call_ollama(self, prompt: str, system: str = None) -> str:
+        """Call local Ollama model and return response."""
+        cmd = ["ollama", "run", self.model]
+
+        full_prompt = prompt
+        if system:
+            full_prompt = f"System: {system}\n\nUser: {prompt}"
+
+        try:
+            result = subprocess.run(
+                cmd,
+                input=full_prompt,
+                capture_output=True,
+                text=True,
+                timeout=PROMPT_LOOP_TIMEOUT
+            )
+            return result.stdout.strip()
+        except subprocess.TimeoutExpired:
+            self.log("Ollama call timed out", "WARN")
+            return ""
+        except Exception as e:
+            self.log(f"Ollama call failed: {e}", "ERROR")
+            return ""
+
+    def analyze_task(self, title: str, description: str) -> dict:
+        """Have Ollama analyze the task and identify what information would help."""
+        prompt = f"""Analyze this coding task and identify what additional information would make the prompt more comprehensive.
+
+TASK TITLE: {title}
+
+TASK DESCRIPTION:
+{description}
+
+Respond in this exact JSON format:
+{{
+    "task_type": "type of task (e.g., feature, bugfix, refactor, setup)",
+    "technologies": ["list", "of", "relevant", "technologies"],
+    "search_queries": ["specific searches to find best practices", "documentation queries", "example code searches"],
+    "key_considerations": ["important things to consider", "edge cases", "potential pitfalls"],
+    "missing_details": ["what details would improve this prompt"]
+}}
+
+Only respond with the JSON, no other text."""
+
+        response = self.call_ollama(prompt)
+
+        try:
+            # Try to parse JSON from response
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                return json.loads(json_match.group())
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback if parsing fails
+        return {
+            "task_type": "unknown",
+            "technologies": [],
+            "search_queries": [f"{title} best practices", f"{title} implementation example"],
+            "key_considerations": [],
+            "missing_details": []
+        }
+
+    def gather_web_knowledge(self, analysis: dict) -> str:
+        """Search the web and gather relevant knowledge."""
+        knowledge_parts = []
+
+        for query in analysis.get("search_queries", [])[:5]:  # Limit to 5 searches
+            results = self.web_search(query)
+
+            if results:
+                knowledge_parts.append(f"\n### Search: {query}")
+                for r in results[:3]:  # Top 3 results per search
+                    knowledge_parts.append(f"- **{r['title']}**: {r['snippet']}")
+
+        # Try to fetch content from top result for each search
+        for query in analysis.get("search_queries", [])[:2]:  # Deep dive on top 2
+            results = self.web_search(query)
+            if results and results[0].get('url'):
+                url = results[0]['url']
+                if not any(x in url for x in ['youtube.com', 'video', '.pdf']):
+                    content = self.fetch_url_content(url, max_chars=2000)
+                    if content:
+                        knowledge_parts.append(f"\n### From {results[0]['title']}:")
+                        knowledge_parts.append(content[:1500] + "...")
+
+        return "\n".join(knowledge_parts) if knowledge_parts else ""
+
+    def enhance_prompt(self, title: str, description: str, analysis: dict,
+                       web_knowledge: str, iteration: int) -> str:
+        """Have Ollama create an enhanced version of the prompt."""
+        prompt = f"""You are an expert prompt engineer. Your job is to create the most comprehensive, detailed prompt possible for a coding AI.
+
+ORIGINAL TASK:
+Title: {title}
+Description: {description}
+
+TASK ANALYSIS:
+- Type: {analysis.get('task_type', 'unknown')}
+- Technologies: {', '.join(analysis.get('technologies', []))}
+- Key Considerations: {', '.join(analysis.get('key_considerations', []))}
+
+WEB RESEARCH FINDINGS:
+{web_knowledge if web_knowledge else "(No web research available)"}
+
+ITERATION: {iteration}
+
+Create an enhanced, comprehensive prompt that:
+1. Clearly states the objective
+2. Includes specific technical requirements
+3. Lists edge cases to handle
+4. Provides implementation guidance from the research
+5. Specifies quality requirements
+6. Mentions best practices from the web research
+
+The prompt should be detailed enough that ANY coding AI would produce excellent results.
+
+Write the enhanced prompt now (just the prompt text, no meta-commentary):"""
+
+        return self.call_ollama(prompt)
+
+    def assess_readiness(self, original_task: str, enhanced_prompt: str, iteration: int) -> dict:
+        """Have Ollama assess if the prompt is comprehensive enough."""
+        prompt = f"""You are a prompt quality assessor. Evaluate if this enhanced prompt is comprehensive enough to send to a powerful AI model.
+
+ORIGINAL TASK:
+{original_task}
+
+ENHANCED PROMPT (Iteration {iteration}):
+{enhanced_prompt}
+
+Evaluate on these criteria (1-10 each):
+1. CLARITY: Is the objective crystal clear?
+2. COMPLETENESS: Are all requirements specified?
+3. TECHNICAL_DEPTH: Does it include enough technical details?
+4. EDGE_CASES: Are edge cases and error handling mentioned?
+5. GUIDANCE: Does it provide implementation direction?
+
+Respond in this exact JSON format:
+{{
+    "scores": {{
+        "clarity": 8,
+        "completeness": 7,
+        "technical_depth": 6,
+        "edge_cases": 5,
+        "guidance": 7
+    }},
+    "average_score": 6.6,
+    "is_ready": false,
+    "improvements_needed": ["what specific improvements would help"],
+    "reasoning": "brief explanation"
+}}
+
+A prompt is "ready" when average_score >= 8.0 OR iteration >= 5 and average_score >= 7.0.
+Only respond with JSON."""
+
+        response = self.call_ollama(prompt)
+
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                result = json.loads(json_match.group())
+                # Calculate average if not provided
+                if 'scores' in result and 'average_score' not in result:
+                    scores = result['scores'].values()
+                    result['average_score'] = sum(scores) / len(scores)
+                return result
+        except json.JSONDecodeError:
+            pass
+
+        # Default: continue iterating for first few rounds
+        return {
+            "scores": {},
+            "average_score": 5.0 if iteration < 3 else 8.0,
+            "is_ready": iteration >= 3,
+            "improvements_needed": [],
+            "reasoning": "Could not parse assessment"
+        }
+
+    def run_loop(self, title: str, description: str) -> str:
+        """
+        Main prompt loop - iterate until Ollama decides the prompt is ready.
+
+        Returns the final comprehensive prompt.
+        """
+        self.log(f"Starting prompt loop for: {title}")
+        self.iteration_history = []
+
+        original_task = f"{title}\n\n{description}"
+        current_prompt = original_task
+
+        # Initial analysis
+        self.log("Analyzing task requirements...")
+        analysis = self.analyze_task(title, description)
+        self.log(f"Task type: {analysis.get('task_type', 'unknown')}")
+        self.log(f"Technologies: {', '.join(analysis.get('technologies', []))}")
+
+        # Gather web knowledge
+        self.log("Gathering web knowledge...")
+        web_knowledge = self.gather_web_knowledge(analysis)
+        if web_knowledge:
+            self.log(f"Collected {len(web_knowledge)} chars of research")
+
+        iteration = 0
+        while iteration < PROMPT_LOOP_MAX_ITERATIONS:
+            iteration += 1
+            self.log(f"--- Iteration {iteration} ---")
+
+            # Enhance the prompt
+            self.log("Enhancing prompt...")
+            enhanced = self.enhance_prompt(title, description, analysis, web_knowledge, iteration)
+
+            if not enhanced or len(enhanced) < 100:
+                self.log("Enhancement failed, using previous version", "WARN")
+                enhanced = current_prompt
+
+            # Assess readiness
+            self.log("Assessing readiness...")
+            assessment = self.assess_readiness(original_task, enhanced, iteration)
+
+            avg_score = assessment.get('average_score', 0)
+            is_ready = assessment.get('is_ready', False)
+
+            self.log(f"Score: {avg_score:.1f}/10 | Ready: {is_ready}")
+
+            self.iteration_history.append({
+                'iteration': iteration,
+                'prompt_length': len(enhanced),
+                'score': avg_score,
+                'is_ready': is_ready,
+                'improvements': assessment.get('improvements_needed', [])
+            })
+
+            current_prompt = enhanced
+
+            if is_ready:
+                self.log(f"Prompt ready after {iteration} iterations!")
+                break
+
+            # Add improvements feedback for next iteration
+            if assessment.get('improvements_needed'):
+                improvements = "\n".join(f"- {imp}" for imp in assessment['improvements_needed'])
+                self.log(f"Improvements needed:\n{improvements}")
+
+                # Feed improvements back into analysis for next round
+                analysis['missing_details'] = assessment['improvements_needed']
+
+        # Final formatting
+        final_prompt = self._format_final_prompt(title, current_prompt, analysis)
+
+        self.log(f"Final prompt: {len(final_prompt)} chars, {iteration} iterations")
+        return final_prompt
+
+    def _format_final_prompt(self, title: str, enhanced_prompt: str, analysis: dict) -> str:
+        """Format the final prompt with metadata."""
+        return f"""## Task: {title}
+
+## Comprehensive Implementation Guide
+
+{enhanced_prompt}
+
+## Technical Context
+- Task Type: {analysis.get('task_type', 'implementation')}
+- Technologies: {', '.join(analysis.get('technologies', ['general']))}
+
+## Quality Requirements
+- Follow existing code patterns and conventions
+- Handle edge cases gracefully
+- Write clean, maintainable code
+- Test critical functionality
+
+Now implement this task with excellence."""
+
+    def get_stats(self) -> dict:
+        """Get statistics about the prompt loop run."""
+        if not self.iteration_history:
+            return {}
+
+        return {
+            'total_iterations': len(self.iteration_history),
+            'final_score': self.iteration_history[-1]['score'] if self.iteration_history else 0,
+            'final_prompt_length': self.iteration_history[-1]['prompt_length'] if self.iteration_history else 0,
+            'searches_performed': len(self.search_cache),
+        }
+
 
 # Special template for project setup tasks (Task 1 / initialization)
 SETUP_PROMPT_TEMPLATE = """## Task
@@ -253,6 +660,8 @@ class OvernightRunner:
         fix_retries: int = 2,
         hybrid_mode: bool = False,
         max_failures: int = 3,
+        prompt_loop: bool = False,
+        prompt_loop_model: str = PROMPT_LOOP_MODEL,
     ):
         self.project_path = Path(project_path).resolve()
         self.tasks_file = Path(tasks_file).resolve()
@@ -268,6 +677,13 @@ class OvernightRunner:
         self.hybrid_mode = hybrid_mode  # Use Gemini for complex, Ollama for simple
         self.max_failures = max_failures  # Stop after N consecutive failures
         self.consecutive_failures = 0  # Track consecutive failures
+        self.prompt_loop = prompt_loop  # Use Ollama to craft epic prompts for Gemini
+        self.prompt_loop_model = prompt_loop_model
+
+        # Initialize prompt loop engine if enabled
+        self.prompt_engine: Optional[PromptLoopEngine] = None
+        if self.prompt_loop:
+            self.prompt_engine = PromptLoopEngine(model=prompt_loop_model, verbose=True)
 
         self.state: Optional[OvernightState] = None
         self.log_file: Optional[Path] = None
@@ -808,9 +1224,28 @@ Fix only what is broken. Keep changes minimal."""
         if self.hybrid_mode:
             self.log(f"Model: {task_model} ({model_reason})")
 
-        # Build the Aider command
-        # Use smart prompting for smaller models (with task_id for setup detection)
-        message = enhance_prompt_for_small_model(task.title, task.description, task_model, task.id)
+        # Build the prompt - use prompt loop if enabled for Gemini tasks
+        message = None
+
+        # Use prompt loop for Gemini/cloud model tasks (the whole point is epic prompts for the smart model)
+        if self.prompt_loop and self.prompt_engine and "gemini" in task_model.lower():
+            self.log("=" * 50)
+            self.log("PROMPT LOOP: Crafting epic prompt with Ollama...")
+            self.log("=" * 50)
+            try:
+                message = self.prompt_engine.run_loop(task.title, task.description)
+                stats = self.prompt_engine.get_stats()
+                self.log(f"Prompt loop complete: {stats.get('total_iterations', 0)} iterations, "
+                        f"score {stats.get('final_score', 0):.1f}/10, "
+                        f"{stats.get('searches_performed', 0)} web searches")
+                self.log("=" * 50)
+            except Exception as e:
+                self.log(f"Prompt loop failed: {e}, falling back to standard prompt", "WARN")
+                message = None
+
+        # Fallback to standard prompting
+        if message is None:
+            message = enhance_prompt_for_small_model(task.title, task.description, task_model, task.id)
 
         cmd = [
             str(AIDER_CMD),  # Use wrapper script that activates venv
@@ -1071,6 +1506,10 @@ Fix only what is broken. Keep changes minimal."""
         self.log(f"Model: {self.model}")
         if self.hybrid_mode:
             self.log(f"Hybrid Mode: ON (complex={SMART_MODEL}, simple={self.model})")
+        if self.prompt_loop:
+            self.log(f"Prompt Loop: ON (using {self.prompt_loop_model} to craft epic prompts)")
+            self.log("  -> Ollama will iterate until prompts are comprehensive")
+            self.log("  -> Web search enabled for best practices & documentation")
 
         # Pre-flight checks
         if not self.preflight_checks():
@@ -1225,6 +1664,14 @@ Examples:
 
     # Dry run (no changes)
     overnight.py --project ~/projects/web-app --tasks tasks.md --dry-run
+
+    # EPIC MODE: Hybrid + Prompt Loop
+    # Ollama crafts comprehensive prompts -> Gemini executes with excellence
+    overnight.py --project ~/projects/game --tasks tasks.md --hybrid --prompt-loop
+
+    # Custom prompt loop model (use larger model for better prompts)
+    overnight.py --project ~/projects/app --tasks tasks.md \\
+        --hybrid --prompt-loop --prompt-loop-model "ollama/qwen2.5-coder:14b"
         """
     )
 
@@ -1292,6 +1739,16 @@ Examples:
         default=3,
         help="Stop after N consecutive task failures (default: 3)"
     )
+    parser.add_argument(
+        "--prompt-loop",
+        action="store_true",
+        help="Enable prompt loop: use local Ollama to craft epic, comprehensive prompts before sending to Gemini"
+    )
+    parser.add_argument(
+        "--prompt-loop-model",
+        default=PROMPT_LOOP_MODEL,
+        help=f"Model for prompt loop (default: {PROMPT_LOOP_MODEL})"
+    )
 
     args = parser.parse_args()
 
@@ -1309,6 +1766,8 @@ Examples:
         fix_retries=args.fix_retries,
         hybrid_mode=args.hybrid,
         max_failures=args.max_failures,
+        prompt_loop=args.prompt_loop,
+        prompt_loop_model=args.prompt_loop_model,
     )
 
     # Handle signals for graceful shutdown
