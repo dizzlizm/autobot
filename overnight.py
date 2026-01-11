@@ -231,11 +231,64 @@ class OvernightRunner:
         self.log("Running pre-flight checks...")
         errors = []
 
-        # Check project exists and is a git repo
+        # Auto-create project directory if it doesn't exist
         if not self.project_path.exists():
-            errors.append(f"Project path does not exist: {self.project_path}")
-        elif not (self.project_path / ".git").exists():
-            errors.append(f"Project is not a git repository: {self.project_path}")
+            self.log(f"Creating project directory: {self.project_path}")
+            self.project_path.mkdir(parents=True, exist_ok=True)
+
+        # Auto-initialize git repository if not already initialized
+        if not (self.project_path / ".git").exists():
+            self.log(f"Initializing git repository in: {self.project_path}")
+            os.chdir(self.project_path)
+            subprocess.run(["git", "init"], capture_output=True, text=True)
+
+            # Create a basic .gitignore
+            gitignore_content = """# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+.expo/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+.nyc_output/
+"""
+            gitignore_path = self.project_path / ".gitignore"
+            if not gitignore_path.exists():
+                with open(gitignore_path, "w") as f:
+                    f.write(gitignore_content)
+                self.log("Created .gitignore")
+
+            # Make initial commit so git branch works
+            subprocess.run(["git", "add", "."], capture_output=True, text=True)
+            subprocess.run(
+                ["git", "commit", "-m", "Initial commit - project scaffold"],
+                capture_output=True, text=True
+            )
+            self.log("Created initial git commit")
 
         # Check tasks file exists
         if not self.tasks_file.exists():
@@ -272,8 +325,11 @@ class OvernightRunner:
         if result.stdout.strip():
             self.log("Warning: Git working directory is not clean", "WARN")
             self.log(f"Uncommitted changes:\n{result.stdout}", "WARN")
+        elif result.returncode != 0:
+            # Git may fail on fresh repos, that's okay
+            self.log("Note: Fresh git repository detected", "INFO")
 
-        # Check for project config files (warn if missing - Task 1 should create them)
+        # Check for project config files (info if missing - Task 1 will create them)
         config_files = [
             "package.json",      # Node.js/JavaScript
             "pyproject.toml",    # Python (modern)
@@ -284,14 +340,7 @@ class OvernightRunner:
         ]
         has_config = any((self.project_path / f).exists() for f in config_files)
         if not has_config:
-            self.log("=" * 50, "WARN")
-            self.log("WARNING: No project config found (package.json, etc.)", "WARN")
-            self.log("Task 1 MUST create project structure with:", "WARN")
-            self.log("  - package.json (for JS/TS/Expo)", "WARN")
-            self.log("  - pyproject.toml (for Python)", "WARN")
-            self.log("  - Or appropriate config for your project type", "WARN")
-            self.log("Make sure Task 1 includes explicit setup instructions!", "WARN")
-            self.log("=" * 50, "WARN")
+            self.log("New project detected - Task 1 will create project structure", "INFO")
 
         # Check disk space (need at least 1GB free)
         disk = psutil.disk_usage(str(self.project_path))
