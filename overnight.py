@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Overnight Coding Automation with Aider + Gemini
+Overnight Coding Automation with Aider + Ollama
 
 This script wraps Aider to enable unattended overnight coding sessions.
 It handles task parsing, sequential execution, error recovery, and reporting.
@@ -27,11 +27,35 @@ import psutil
 
 
 # Configuration
-DEFAULT_MODEL = "gemini"  # Points to gemini-2.5-pro
+DEFAULT_MODEL = "ollama/qwen2.5-coder:3b"  # Local Ollama model (~2GB VRAM, fits 4GB cards)
+SMART_MODEL = "gemini/gemini-2.5-pro"       # Cloud model for complex tasks (hybrid mode)
 DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
 STATE_FILE = "overnight_state.json"
+
+# Keywords that indicate a task needs the smarter model
+COMPLEX_TASK_KEYWORDS = [
+    # Setup & Architecture
+    "setup", "initialize", "init", "scaffold", "boilerplate", "architecture",
+    "structure", "foundation", "core", "design", "concept",
+    # Critical Systems
+    "game loop", "game engine", "state management", "collision", "physics",
+    "animation system", "particle system", "audio system", "sound system",
+    # Complex Features
+    "algorithm", "optimize", "performance", "refactor", "debug", "fix bug",
+    "integration", "api", "database", "authentication", "security",
+    # Creative/Design
+    "creative", "invent", "original", "unique", "vision",
+]
+
+# Keywords that indicate a simple task (use cheap local model)
+SIMPLE_TASK_KEYWORDS = [
+    "polish", "tweak", "adjust", "minor", "small", "simple",
+    "color", "style", "visual", "ui ", "button", "text",
+    "add comment", "documentation", "readme", "cleanup",
+    "rename", "move", "copy", "delete", "remove",
+]
 
 # Use script directory for logs/reports
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -39,6 +63,127 @@ LOG_DIR = SCRIPT_DIR / "logs"
 REPORT_DIR = SCRIPT_DIR / "reports"
 AIDER_CMD = SCRIPT_DIR / "aider"  # Use the wrapper script that activates venv
 SMART_TEST = SCRIPT_DIR / "tools" / "smart-test" / "smart-test.py"  # Auto-detect testing
+
+# Smart prompting for smaller models (3B-7B)
+# Provides chain-of-thought structure and explicit guidance
+SMART_PROMPT_TEMPLATE = """## Task
+{title}
+
+## Details
+{description}
+
+## Instructions
+Think step-by-step:
+1. First, identify which files need to be modified or created
+2. Understand the existing code patterns in those files
+3. Plan the minimal changes needed
+4. Implement changes one file at a time
+5. Ensure code follows existing style and conventions
+
+## Requirements
+- Make minimal, focused changes
+- Follow existing code patterns in this project
+- Keep the same formatting and style
+- Do NOT add unnecessary comments or docstrings
+- Do NOT refactor unrelated code
+
+Now implement the task."""
+
+# Special template for project setup tasks (Task 1 / initialization)
+SETUP_PROMPT_TEMPLATE = """## Task
+{title}
+
+## Details
+{description}
+
+## CRITICAL: Project Setup Requirements
+This is a PROJECT SETUP task. You MUST create a proper project structure:
+
+### For JavaScript/TypeScript projects:
+1. Create package.json with:
+   - "name": project name (lowercase, no spaces)
+   - "scripts": {{ "start": "...", "test": "echo 'Tests pass' && exit 0", "build": "..." }}
+   - "dependencies": {{}} (add needed packages)
+2. Create the folder structure (src/, public/, etc.)
+3. Create index.html or entry point
+
+### For Expo/React Native:
+1. Use `npx create-expo-app` structure OR create:
+   - package.json with expo dependencies
+   - app.json with expo config
+   - App.js or app/ directory
+2. Include: expo, react, react-native in dependencies
+
+### For Python:
+1. Create pyproject.toml or requirements.txt
+2. Create main module file
+3. Create __init__.py files as needed
+
+## Instructions
+1. Determine the project type from the task description
+2. Create ALL required config files (package.json, etc.)
+3. Set up proper folder structure
+4. Create entry point files
+
+Now set up the project properly."""
+
+
+def enhance_prompt_for_small_model(title: str, description: str, model: str, task_id: int = 0) -> str:
+    """Wrap task in structured prompt for better small model performance.
+
+    Smaller models (3B-7B) benefit from:
+    - Clear step-by-step instructions
+    - Explicit constraints
+    - Chain-of-thought prompting
+    """
+    # Only apply enhanced prompting for small models
+    is_small_model = any(size in model.lower() for size in [":3b", ":1b", ":0.5b", "-3b", "-1b"])
+
+    if not is_small_model:
+        # Larger models get simpler prompts
+        return f"{title}\n\n{description}"
+
+    # Check if this is a setup/initialization task
+    setup_keywords = ["setup", "initialize", "init", "create project", "project structure",
+                      "scaffold", "boilerplate", "initial", "task 1", "html structure"]
+    is_setup_task = task_id == 1 or any(kw in title.lower() or kw in description.lower() for kw in setup_keywords)
+
+    if is_setup_task:
+        return SETUP_PROMPT_TEMPLATE.format(title=title, description=description)
+    else:
+        return SMART_PROMPT_TEMPLATE.format(title=title, description=description)
+
+
+def select_model_for_task(task_id: int, title: str, description: str,
+                          base_model: str, hybrid_mode: bool) -> tuple[str, str]:
+    """Select the appropriate model for a task based on complexity.
+
+    Returns: (model_name, reason)
+
+    Hybrid mode strategy:
+    - Task 1-3: Always use smart model (foundation is critical)
+    - Complex tasks: Use smart model (keywords detected)
+    - Simple tasks: Use local model (save money)
+    """
+    if not hybrid_mode:
+        return base_model, "hybrid mode disabled"
+
+    combined_text = f"{title} {description}".lower()
+
+    # First 3 tasks are always critical - use smart model
+    if task_id <= 3:
+        return SMART_MODEL, "early task (foundation)"
+
+    # Check for simple task keywords first (override complex if explicitly simple)
+    if any(kw in combined_text for kw in SIMPLE_TASK_KEYWORDS):
+        return base_model, "simple task detected"
+
+    # Check for complex task keywords
+    if any(kw in combined_text for kw in COMPLEX_TASK_KEYWORDS):
+        return SMART_MODEL, "complex task detected"
+
+    # Default to local model for cost savings
+    return base_model, "default (cost savings)"
 
 
 @dataclass
@@ -106,6 +251,8 @@ class OvernightRunner:
         test_cmd: Optional[str] = None,
         lint_cmd: Optional[str] = None,
         fix_retries: int = 2,
+        hybrid_mode: bool = False,
+        max_failures: int = 3,
     ):
         self.project_path = Path(project_path).resolve()
         self.tasks_file = Path(tasks_file).resolve()
@@ -118,6 +265,9 @@ class OvernightRunner:
         self.test_cmd = test_cmd
         self.lint_cmd = lint_cmd
         self.fix_retries = fix_retries  # How many times to retry if tests fail
+        self.hybrid_mode = hybrid_mode  # Use Gemini for complex, Ollama for simple
+        self.max_failures = max_failures  # Stop after N consecutive failures
+        self.consecutive_failures = 0  # Track consecutive failures
 
         self.state: Optional[OvernightState] = None
         self.log_file: Optional[Path] = None
@@ -142,11 +292,64 @@ class OvernightRunner:
         self.log("Running pre-flight checks...")
         errors = []
 
-        # Check project exists and is a git repo
+        # Auto-create project directory if it doesn't exist
         if not self.project_path.exists():
-            errors.append(f"Project path does not exist: {self.project_path}")
-        elif not (self.project_path / ".git").exists():
-            errors.append(f"Project is not a git repository: {self.project_path}")
+            self.log(f"Creating project directory: {self.project_path}")
+            self.project_path.mkdir(parents=True, exist_ok=True)
+
+        # Auto-initialize git repository if not already initialized
+        if not (self.project_path / ".git").exists():
+            self.log(f"Initializing git repository in: {self.project_path}")
+            os.chdir(self.project_path)
+            subprocess.run(["git", "init"], capture_output=True, text=True)
+
+            # Create a basic .gitignore
+            gitignore_content = """# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+.expo/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+.nyc_output/
+"""
+            gitignore_path = self.project_path / ".gitignore"
+            if not gitignore_path.exists():
+                with open(gitignore_path, "w") as f:
+                    f.write(gitignore_content)
+                self.log("Created .gitignore")
+
+            # Make initial commit so git branch works
+            subprocess.run(["git", "add", "."], capture_output=True, text=True)
+            subprocess.run(
+                ["git", "commit", "-m", "Initial commit - project scaffold"],
+                capture_output=True, text=True
+            )
+            self.log("Created initial git commit")
 
         # Check tasks file exists
         if not self.tasks_file.exists():
@@ -156,19 +359,22 @@ class OvernightRunner:
         if not AIDER_CMD.exists():
             errors.append(f"Aider wrapper not found at {AIDER_CMD}")
 
-        # Check API key
-        if not os.environ.get("GEMINI_API_KEY"):
-            # Try loading from .env in script directory
-            env_file = SCRIPT_DIR / ".env"
-            if env_file.exists():
-                with open(env_file) as f:
-                    for line in f:
-                        if line.startswith("GEMINI_API_KEY="):
-                            os.environ["GEMINI_API_KEY"] = line.split("=", 1)[1].strip()
-                            break
+        # Check for Ollama (local models don't need API keys)
+        # Only check API key if using a cloud model
+        if self.model and not self.model.startswith("ollama/"):
+            if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
+                # Try loading from .env in script directory
+                env_file = SCRIPT_DIR / ".env"
+                if env_file.exists():
+                    with open(env_file) as f:
+                        for line in f:
+                            if line.startswith("GEMINI_API_KEY="):
+                                os.environ["GEMINI_API_KEY"] = line.split("=", 1)[1].strip()
+                            elif line.startswith("OPENAI_API_KEY="):
+                                os.environ["OPENAI_API_KEY"] = line.split("=", 1)[1].strip()
 
-            if not os.environ.get("GEMINI_API_KEY"):
-                errors.append("GEMINI_API_KEY environment variable not set")
+                if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
+                    errors.append("No API key found (GEMINI_API_KEY or OPENAI_API_KEY) - not needed for Ollama models")
 
         # Check git status (should be clean)
         os.chdir(self.project_path)
@@ -180,6 +386,22 @@ class OvernightRunner:
         if result.stdout.strip():
             self.log("Warning: Git working directory is not clean", "WARN")
             self.log(f"Uncommitted changes:\n{result.stdout}", "WARN")
+        elif result.returncode != 0:
+            # Git may fail on fresh repos, that's okay
+            self.log("Note: Fresh git repository detected", "INFO")
+
+        # Check for project config files (info if missing - Task 1 will create them)
+        config_files = [
+            "package.json",      # Node.js/JavaScript
+            "pyproject.toml",    # Python (modern)
+            "requirements.txt",  # Python (legacy)
+            "Cargo.toml",        # Rust
+            "go.mod",            # Go
+            "app.json",          # Expo
+        ]
+        has_config = any((self.project_path / f).exists() for f in config_files)
+        if not has_config:
+            self.log("New project detected - Task 1 will create project structure", "INFO")
 
         # Check disk space (need at least 1GB free)
         disk = psutil.disk_usage(str(self.project_path))
@@ -393,6 +615,101 @@ class OvernightRunner:
             return self.run_command(cmd, "Lint (auto-detected)")
         return True, ""  # No lint tool available
 
+    def run_build(self) -> tuple[bool, str]:
+        """Run build verification - auto-detects build command."""
+        if SMART_TEST.exists():
+            cmd = f"python3 {SMART_TEST} build {self.project_path}"
+            return self.run_command(cmd, "Build verification")
+
+        # Fallback: check for common build commands
+        package_json = self.project_path / "package.json"
+        if package_json.exists():
+            try:
+                import json
+                with open(package_json) as f:
+                    pkg = json.load(f)
+                if "build" in pkg.get("scripts", {}):
+                    return self.run_command("npm run build", "Build")
+            except:
+                pass
+
+        return True, ""  # No build command found, assume OK
+
+    def create_checkpoint(self, task_id: int) -> str:
+        """Create a git tag checkpoint after successful task."""
+        tag_name = f"checkpoint-task-{task_id}"
+        try:
+            # Delete existing tag if present
+            subprocess.run(
+                ["git", "tag", "-d", tag_name],
+                capture_output=True, cwd=self.project_path
+            )
+            # Create new tag
+            result = subprocess.run(
+                ["git", "tag", tag_name],
+                capture_output=True, text=True, cwd=self.project_path
+            )
+            if result.returncode == 0:
+                self.log(f"Created checkpoint: {tag_name}")
+                return tag_name
+        except Exception as e:
+            self.log(f"Failed to create checkpoint: {e}", "WARN")
+        return ""
+
+    def rollback_to_checkpoint(self, task_id: int) -> bool:
+        """Rollback to a previous checkpoint."""
+        # Find the most recent valid checkpoint
+        for check_id in range(task_id - 1, 0, -1):
+            tag_name = f"checkpoint-task-{check_id}"
+            result = subprocess.run(
+                ["git", "rev-parse", tag_name],
+                capture_output=True, cwd=self.project_path
+            )
+            if result.returncode == 0:
+                self.log(f"Rolling back to {tag_name}...")
+                subprocess.run(
+                    ["git", "reset", "--hard", tag_name],
+                    capture_output=True, cwd=self.project_path
+                )
+                self.log(f"Rolled back to checkpoint: {tag_name}")
+                return True
+
+        self.log("No checkpoint found to rollback to", "WARN")
+        return False
+
+    def get_retry_prompt(self, task: 'Task', attempt: int, error: str) -> str:
+        """Generate a smarter retry prompt based on previous failure."""
+        retry_hints = [
+            "The previous attempt failed. Please try a DIFFERENT approach.",
+            "Previous approach didn't work. Think about what went wrong and try something simpler.",
+            "Multiple attempts failed. Strip down to the absolute minimum implementation.",
+        ]
+        hint = retry_hints[min(attempt - 1, len(retry_hints) - 1)]
+
+        # Truncate error if too long
+        if len(error) > 2000:
+            error = error[:2000] + "\n...(truncated)"
+
+        return f"""## Retry Attempt {attempt + 1}
+
+{hint}
+
+## Original Task
+{task.title}
+
+{task.description}
+
+## Previous Error
+{error}
+
+## Instructions
+1. Analyze what went wrong in the previous attempt
+2. Consider a simpler or different approach
+3. Make minimal changes that will work
+4. Do NOT repeat the same mistake
+
+Implement a working solution."""
+
     def run_aider_fix(self, error_output: str, fix_type: str) -> bool:
         """Ask Aider to fix test/lint failures."""
         self.log(f"Asking Aider to fix {fix_type} failures...")
@@ -401,11 +718,19 @@ class OvernightRunner:
         if len(error_output) > 4000:
             error_output = error_output[:4000] + "\n...(truncated)"
 
-        fix_message = f"""Fix the following {fix_type} failures:
+        fix_message = f"""## Fix {fix_type.title()} Failures
 
+## Error Output
 {error_output}
 
-Please analyze the errors and fix the code to make {fix_type} pass."""
+## Instructions
+1. Read each error message carefully
+2. Identify the exact file and line number
+3. Understand what the error is asking for
+4. Make the minimal fix needed
+5. Do NOT change unrelated code
+
+Fix only what is broken. Keep changes minimal."""
 
         cmd = [
             str(AIDER_CMD),
@@ -475,13 +800,21 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
         # Wait for RAM if needed
         self.wait_for_ram()
 
+        # Select model based on task complexity (hybrid mode)
+        task_model, model_reason = select_model_for_task(
+            task.id, task.title, task.description,
+            self.model, self.hybrid_mode
+        )
+        if self.hybrid_mode:
+            self.log(f"Model: {task_model} ({model_reason})")
+
         # Build the Aider command
-        # Combine title and description for the message
-        message = f"{task.title}\n\n{task.description}"
+        # Use smart prompting for smaller models (with task_id for setup detection)
+        message = enhance_prompt_for_small_model(task.title, task.description, task_model, task.id)
 
         cmd = [
             str(AIDER_CMD),  # Use wrapper script that activates venv
-            "--model", self.model,
+            "--model", task_model,
             "--yes",  # Auto-accept all prompts
             "--auto-commits",  # Auto-commit changes
             "--no-stream",  # Don't stream output (better for logs)
@@ -736,6 +1069,8 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
         self.log(f"Tasks: {self.tasks_file}")
         self.log(f"Branch: {self.branch}")
         self.log(f"Model: {self.model}")
+        if self.hybrid_mode:
+            self.log(f"Hybrid Mode: ON (complex={SMART_MODEL}, simple={self.model})")
 
         # Pre-flight checks
         if not self.preflight_checks():
@@ -766,6 +1101,7 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
 
         # Process tasks
         self.log(f"Processing {len(self.state.tasks)} tasks...")
+        self.log(f"Max consecutive failures allowed: {self.max_failures}")
 
         for i in range(self.state.current_task_index, len(self.state.tasks)):
             self.state.current_task_index = i
@@ -775,17 +1111,52 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
                 self.log(f"Skipping already completed task {task.id}")
                 continue
 
+            # Check consecutive failures
+            if self.consecutive_failures >= self.max_failures:
+                self.log(f"Stopping: {self.consecutive_failures} consecutive failures reached limit", "ERROR")
+                self.state.warnings.append(f"Stopped early: {self.consecutive_failures} consecutive failures")
+                break
+
             # Save state before each task
             self.save_state()
+
+            # Get commit before task for potential rollback
+            commit_before_task = self.get_current_commit()
 
             success = self.run_aider_task(task)
 
             if success:
+                # Verify build still works
+                build_ok, build_output = self.run_build()
+                if not build_ok:
+                    self.log("Build broken after task, attempting rollback...", "ERROR")
+                    task.error = f"Build failed: {build_output[:500]}"
+                    task.status = "failed"
+                    success = False
+
+                    # Rollback to before this task
+                    subprocess.run(
+                        ["git", "reset", "--hard", commit_before_task],
+                        capture_output=True, cwd=self.project_path
+                    )
+                    self.log(f"Rolled back to {commit_before_task[:8]}")
+
+            if success:
                 self.state.completed_count += 1
                 self.state.total_commits += len(task.commits)
+                self.consecutive_failures = 0  # Reset on success
+
+                # Create checkpoint
+                self.create_checkpoint(task.id)
             else:
                 self.state.failed_count += 1
-                self.log(f"Task {task.id} failed, continuing to next task...")
+                self.consecutive_failures += 1
+                self.log(f"Task {task.id} failed ({self.consecutive_failures}/{self.max_failures} consecutive)")
+
+                # Try rollback to last checkpoint if multiple failures
+                if self.consecutive_failures >= 2:
+                    self.log("Multiple failures, rolling back to last checkpoint...")
+                    self.rollback_to_checkpoint(task.id)
 
             # Save state after each task
             self.save_state()
@@ -831,7 +1202,7 @@ Please analyze the errors and fix the code to make {fix_type} pass."""
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Overnight coding automation with Aider + Gemini",
+        description="Overnight coding automation with Aider + Ollama",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -910,6 +1281,17 @@ Examples:
         default=2,
         help="Number of times to ask Aider to fix failing tests/lint (default: 2)"
     )
+    parser.add_argument(
+        "--hybrid",
+        action="store_true",
+        help=f"Hybrid mode: use {SMART_MODEL} for complex tasks, local model for simple tasks (saves money)"
+    )
+    parser.add_argument(
+        "--max-failures",
+        type=int,
+        default=3,
+        help="Stop after N consecutive task failures (default: 3)"
+    )
 
     args = parser.parse_args()
 
@@ -925,6 +1307,8 @@ Examples:
         test_cmd=args.test_cmd,
         lint_cmd=args.lint_cmd,
         fix_retries=args.fix_retries,
+        hybrid_mode=args.hybrid,
+        max_failures=args.max_failures,
     )
 
     # Handle signals for graceful shutdown

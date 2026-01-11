@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Aider + Gemini Overnight Automation Setup Script
+# Aider + Ollama Overnight Automation Setup Script
 # Installs everything in the directory where this script lives
 
 # Ensure we're running in bash, not sh
@@ -80,7 +80,7 @@ setup_venv_and_aider() {
     pip install --upgrade pip
 
     echo_status "Installing Aider (this may take a few minutes)..."
-    pip install aider-chat google-generativeai psutil
+    pip install aider-chat psutil
 
     if command -v aider &> /dev/null; then
         AIDER_VERSION=$(aider --version 2>/dev/null || echo "installed")
@@ -117,34 +117,32 @@ EOF
 }
 
 #------------------------------------------------------------------------------
-# STEP 5: Configure Gemini API
+# STEP 5: Install and Configure Ollama
 #------------------------------------------------------------------------------
-configure_gemini() {
-    echo_status "Configuring Gemini API..."
+configure_ollama() {
+    echo_status "Setting up Ollama..."
 
-    if [ -n "$GEMINI_API_KEY" ]; then
-        echo_status "GEMINI_API_KEY already set"
+    # Check if Ollama is already installed
+    if command -v ollama &> /dev/null; then
+        echo_status "Ollama already installed: $(ollama --version 2>/dev/null || echo 'installed')"
     else
-        echo_warn "GEMINI_API_KEY not found"
-        echo ""
-        echo "Get a free API key at: https://aistudio.google.com/app/apikey"
-        echo ""
-        read -p "Enter your Gemini API key (or press Enter to skip): " API_KEY
+        echo_status "Installing Ollama..."
+        curl -fsSL https://ollama.com/install.sh | sh
 
-        if [ -n "$API_KEY" ]; then
-            if ! grep -q "GEMINI_API_KEY" ~/.bashrc 2>/dev/null; then
-                echo "" >> ~/.bashrc
-                echo "# Gemini API Key for Aider" >> ~/.bashrc
-                echo "export GEMINI_API_KEY=\"$API_KEY\"" >> ~/.bashrc
-                echo_status "Added GEMINI_API_KEY to ~/.bashrc"
-            fi
-
-            echo "GEMINI_API_KEY=$API_KEY" > "$OVERNIGHT_DIR/.env"
-            chmod 600 "$OVERNIGHT_DIR/.env"
-            export GEMINI_API_KEY="$API_KEY"
+        if command -v ollama &> /dev/null; then
+            echo_status "Ollama installed successfully"
         else
-            echo_warn "Skipping API key. Set GEMINI_API_KEY manually later."
+            echo_error "Ollama installation failed"
+            echo_warn "Install manually from: https://ollama.com/download"
         fi
+    fi
+
+    # Pull the default model (qwen2.5-coder:3b)
+    echo_status "Pulling qwen2.5-coder:3b model (this may take a while)..."
+    if ollama pull qwen2.5-coder:3b; then
+        echo_status "Model qwen2.5-coder:3b ready"
+    else
+        echo_warn "Failed to pull model. Run manually: ollama pull qwen2.5-coder:3b"
     fi
 }
 
@@ -156,7 +154,7 @@ create_aider_config() {
 
     mkdir -p "$CONFIG_DIR"
     cat > "$CONFIG_DIR/.aider.conf.yml" << 'EOF'
-model: gemini
+model: ollama/qwen2.5-coder:3b
 auto-commits: true
 dirty-commits: true
 stream: false
@@ -177,7 +175,7 @@ setup_shell() {
 # Aider Overnight Automation
 export PATH=\"$OVERNIGHT_DIR:\$PATH\"
 alias overnight=\"$OVERNIGHT_DIR/run-overnight\"
-alias aider-gemini=\"$OVERNIGHT_DIR/aider --model gemini --yes\"
+alias aider-ollama=\"$OVERNIGHT_DIR/aider --model ollama/qwen2.5-coder:7b --yes\"
 "
 
     if ! grep -q "Aider Overnight" ~/.bashrc 2>/dev/null; then
@@ -226,10 +224,15 @@ print_summary() {
     echo "Quick test:"
     echo "  cd $OVERNIGHT_DIR/projects"
     echo "  mkdir test && cd test && git init"
-    echo "  $OVERNIGHT_DIR/aider --model gemini"
+    echo "  $OVERNIGHT_DIR/aider --model ollama/qwen2.5-coder:7b"
     echo ""
     echo "Overnight run:"
     echo "  $OVERNIGHT_DIR/run-overnight --project /path/to/project --tasks tasks.md"
+    echo ""
+    echo "Alternative models (change with --model):"
+    echo "  ollama/codellama:7b        # Meta's coding model"
+    echo "  ollama/deepseek-coder:6.7b # DeepSeek coding model"
+    echo "  ollama/mistral:7b          # General purpose"
     echo ""
 }
 
@@ -238,7 +241,7 @@ print_summary() {
 #------------------------------------------------------------------------------
 main() {
     echo "=============================================="
-    echo "  Aider + Gemini Setup"
+    echo "  Aider + Ollama Setup"
     echo "  Installing to: $OVERNIGHT_DIR"
     echo "=============================================="
     echo ""
@@ -247,7 +250,7 @@ main() {
     create_directories
     setup_venv_and_aider
     create_wrapper_scripts
-    configure_gemini
+    configure_ollama
     create_aider_config
     setup_shell
     verify_installation

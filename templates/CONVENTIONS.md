@@ -16,6 +16,12 @@ Brief description of what this project does.
 - Styling: Tailwind / CSS Modules / styled-components
 - State: Redux / Zustand / Context API
 
+### Mobile (Expo/React Native)
+- Framework: Expo SDK [version]
+- Router: Expo Router / React Navigation
+- UI: React Native Paper / NativeWind / etc.
+- Storage: AsyncStorage / Expo SecureStore
+
 ### Backend (if applicable)
 - Framework: FastAPI / Express / Django / etc.
 - Language: Python / TypeScript / Go
@@ -42,12 +48,19 @@ src/
 ## Commands
 
 ```bash
-# Development
+# Development (Web)
 npm run dev          # Start development server
 npm run build        # Build for production
 npm run lint         # Run linter
 npm run test         # Run tests
 npm run typecheck    # Run TypeScript checks
+
+# Development (Expo/Mobile)
+npx expo start       # Start dev server (scan QR with Expo Go)
+npx expo start --ios # Start iOS simulator
+npx expo start --android # Start Android emulator
+npx expo doctor      # Check for issues
+npx expo export      # Build web bundle (validation)
 
 # Backend (if separate)
 uvicorn main:app --reload   # Start FastAPI server
@@ -120,6 +133,57 @@ These files/directories should not be modified by Aider:
 | SendGrid | Email | https://docs.sendgrid.com |
 | Redis | Caching | https://redis.io/docs |
 
+## Mobile/Expo Patterns
+
+### Navigation (Expo Router)
+```typescript
+// File-based routing in app/ directory
+// app/(tabs)/index.tsx -> "/"
+// app/(tabs)/profile.tsx -> "/profile"
+// app/settings/[id].tsx -> "/settings/:id"
+
+// Navigation
+import { router } from 'expo-router';
+router.push('/profile');
+router.replace('/login');
+router.back();
+```
+
+### Native Components
+```typescript
+// Use React Native components, not web HTML
+import { View, Text, Pressable, ScrollView } from 'react-native';
+
+// NOT <div>, <span>, <button>, <p>
+// Use View for containers, Text for all text, Pressable for buttons
+```
+
+### Platform-Specific Code
+```typescript
+import { Platform } from 'react-native';
+
+const styles = {
+  shadow: Platform.select({
+    ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 } },
+    android: { elevation: 4 },
+  }),
+};
+```
+
+### Safe Areas
+```typescript
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+// Always wrap screens in SafeAreaView for notches/status bars
+export default function Screen() {
+  return (
+    <SafeAreaView style={{ flex: 1 }}>
+      {/* content */}
+    </SafeAreaView>
+  );
+}
+```
+
 ## Common Patterns
 
 ### Error Handling (TypeScript)
@@ -157,9 +221,22 @@ interface ApiResponse<T> {
 
 ## Notes for AI
 
-- When adding new features, check for similar existing implementations first
-- Prefer modifying existing files over creating new ones
-- Always run `npm run typecheck` and `npm run test` after changes
-- If you're unsure about a pattern, follow what's already in the codebase
-- Don't add comments that just restate what the code does
-- Don't add try/catch blocks unless there's meaningful error handling
+### Critical Rules
+- **ONE TASK AT A TIME**: Focus only on the current task
+- **MINIMAL CHANGES**: Change only what is necessary
+- **FOLLOW PATTERNS**: Copy existing code patterns exactly
+- **NO EXTRAS**: Do not add comments, docstrings, or type hints unless asked
+
+### Step-by-Step Approach
+1. Read the existing file first
+2. Find similar code to use as reference
+3. Make the smallest change that works
+4. Verify the change matches existing style
+
+### Do NOT
+- Add comments that explain obvious code
+- Refactor code you weren't asked to change
+- Add error handling unless specifically needed
+- Create new files when you can modify existing ones
+- Add type annotations to files that don't have them
+- Change formatting or whitespace
