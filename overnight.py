@@ -27,8 +27,8 @@ import psutil
 
 
 # Configuration
-DEFAULT_MODEL = "ollama/qwen2.5-coder:3b"  # Local Ollama model (no API key needed)
-SMART_MODEL = "gemini/gemini-2.0-flash"     # Cloud model for complex tasks (hybrid mode)
+DEFAULT_MODEL = "ollama/qwen2.5-coder:3b"  # Local Ollama model (~2GB VRAM, fits 4GB cards)
+SMART_MODEL = "gemini/gemini-2.5-pro"       # Cloud model for complex tasks (hybrid mode)
 DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
