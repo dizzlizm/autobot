@@ -2,12 +2,136 @@
 
 > Instructions for creating task files:
 > - Each ## heading becomes a task
-> - Be specific and provide context
-> - Include acceptance criteria when helpful
-> - Mention related files if known
 > - Tasks run sequentially, so order them logically
+> - **CRITICAL**: Task 1 MUST set up project structure for new projects
+> - Be specific - small models need explicit instructions
+> - Include file paths when known
 
 ---
+
+<!--
+=============================================================================
+TASK 1 EXAMPLES - Choose ONE based on your project type
+These are CRITICAL for new projects - the AI needs explicit setup instructions
+=============================================================================
+-->
+
+## Task 1 Example: Web Game (Vanilla JS)
+
+Set up a vanilla JavaScript web game project:
+
+1. Create package.json:
+```json
+{
+  "name": "my-game",
+  "scripts": {
+    "start": "npx serve .",
+    "test": "echo 'Tests pass' && exit 0"
+  }
+}
+```
+
+2. Create index.html with:
+   - HTML5 doctype
+   - Canvas element (800x600)
+   - Script tag loading game.js
+
+3. Create game.js with:
+   - Canvas context setup
+   - Basic game loop (requestAnimationFrame)
+   - Empty init() function
+
+4. Create styles.css with basic canvas centering
+
+---
+
+## Task 1 Example: Expo Mobile App
+
+Set up an Expo React Native project:
+
+1. Create package.json:
+```json
+{
+  "name": "my-app",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "test": "echo 'Tests pass' && exit 0"
+  },
+  "dependencies": {
+    "expo": "~50.0.0",
+    "expo-router": "~3.4.0",
+    "react": "18.2.0",
+    "react-native": "0.73.0",
+    "react-native-safe-area-context": "4.8.2"
+  }
+}
+```
+
+2. Create app.json with expo config (name, slug, version)
+
+3. Create app/_layout.tsx with Stack navigator
+
+4. Create app/index.tsx with basic screen using View/Text
+
+---
+
+## Task 1 Example: Node.js API
+
+Set up a Node.js Express API project:
+
+1. Create package.json:
+```json
+{
+  "name": "my-api",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "echo 'Tests pass' && exit 0"
+  },
+  "dependencies": {
+    "express": "^4.18.0"
+  }
+}
+```
+
+2. Create src/index.js with:
+   - Express app setup
+   - Health check route GET /health
+   - Listen on port 3000
+
+3. Create src/routes/ directory
+
+---
+
+## Task 1 Example: Python Project
+
+Set up a Python project:
+
+1. Create pyproject.toml:
+```toml
+[project]
+name = "my-project"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[project.scripts]
+start = "python -m myproject"
+```
+
+2. Create myproject/__init__.py
+
+3. Create myproject/main.py with entry point
+
+4. Create tests/ directory with test_main.py
+
+---
+
+<!--
+=============================================================================
+FEATURE TASK EXAMPLES - Use these patterns for subsequent tasks
+=============================================================================
+-->
 
 ## Add user authentication
 
@@ -28,8 +152,6 @@ Implement JWT-based authentication with the following:
    - Validates JWT from Authorization header
    - Attaches user to request context
    - Returns 401 for invalid/expired tokens
-
-4. Add tests for all auth endpoints
 
 Files to reference: `src/api/`, `src/middleware/`
 
@@ -65,55 +187,18 @@ See: `src/components/SignupForm.tsx`
 
 ---
 
-## Add rate limiting to API
-
-Implement rate limiting to prevent abuse:
-
-- Limit: 100 requests per minute per IP
-- Return 429 Too Many Requests when exceeded
-- Add X-RateLimit-* headers to responses
-- Exempt authenticated admin users
-
-Use redis if available, otherwise in-memory store.
-
----
-
-## Improve test coverage for user service
-
-The user service has low test coverage. Add tests for:
-
-- `createUser()` - success and duplicate email cases
-- `updateUser()` - valid update and not found cases
-- `deleteUser()` - success and cascade behavior
-- `getUserById()` - found and not found cases
-
-Target: >90% coverage for `src/services/userService.ts`
-
----
-
-## Refactor database queries to use transactions
-
-Several operations need to be atomic but aren't using transactions.
-
-Update these functions to use database transactions:
-- `createOrder()` - should atomically create order + line items
-- `transferFunds()` - should atomically debit and credit accounts
-- `bulkUpdateStatus()` - should update all or none
-
-Add rollback on any failure.
-
----
-
 <!--
-Template for adding more tasks:
+=============================================================================
+TEMPLATE - Copy and modify for your tasks
+=============================================================================
 
 ## [Task Title]
 
-[Clear description of what needs to be done]
+[Clear, specific description of what needs to be done]
 
 Requirements:
-- Requirement 1
-- Requirement 2
+- Requirement 1 (be explicit)
+- Requirement 2 (include file paths)
 
 Files involved: `path/to/file.ts`
 

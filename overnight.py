@@ -50,7 +50,7 @@ SMART_PROMPT_TEMPLATE = """## Task
 
 ## Instructions
 Think step-by-step:
-1. First, identify which files need to be modified
+1. First, identify which files need to be modified or created
 2. Understand the existing code patterns in those files
 3. Plan the minimal changes needed
 4. Implement changes one file at a time
@@ -62,12 +62,49 @@ Think step-by-step:
 - Keep the same formatting and style
 - Do NOT add unnecessary comments or docstrings
 - Do NOT refactor unrelated code
-- Test your changes mentally before committing
 
 Now implement the task."""
 
+# Special template for project setup tasks (Task 1 / initialization)
+SETUP_PROMPT_TEMPLATE = """## Task
+{title}
 
-def enhance_prompt_for_small_model(title: str, description: str, model: str) -> str:
+## Details
+{description}
+
+## CRITICAL: Project Setup Requirements
+This is a PROJECT SETUP task. You MUST create a proper project structure:
+
+### For JavaScript/TypeScript projects:
+1. Create package.json with:
+   - "name": project name (lowercase, no spaces)
+   - "scripts": {{ "start": "...", "test": "echo 'Tests pass' && exit 0", "build": "..." }}
+   - "dependencies": {{}} (add needed packages)
+2. Create the folder structure (src/, public/, etc.)
+3. Create index.html or entry point
+
+### For Expo/React Native:
+1. Use `npx create-expo-app` structure OR create:
+   - package.json with expo dependencies
+   - app.json with expo config
+   - App.js or app/ directory
+2. Include: expo, react, react-native in dependencies
+
+### For Python:
+1. Create pyproject.toml or requirements.txt
+2. Create main module file
+3. Create __init__.py files as needed
+
+## Instructions
+1. Determine the project type from the task description
+2. Create ALL required config files (package.json, etc.)
+3. Set up proper folder structure
+4. Create entry point files
+
+Now set up the project properly."""
+
+
+def enhance_prompt_for_small_model(title: str, description: str, model: str, task_id: int = 0) -> str:
     """Wrap task in structured prompt for better small model performance.
 
     Smaller models (3B-7B) benefit from:
@@ -78,11 +115,19 @@ def enhance_prompt_for_small_model(title: str, description: str, model: str) -> 
     # Only apply enhanced prompting for small models
     is_small_model = any(size in model.lower() for size in [":3b", ":1b", ":0.5b", "-3b", "-1b"])
 
-    if is_small_model:
-        return SMART_PROMPT_TEMPLATE.format(title=title, description=description)
-    else:
+    if not is_small_model:
         # Larger models get simpler prompts
         return f"{title}\n\n{description}"
+
+    # Check if this is a setup/initialization task
+    setup_keywords = ["setup", "initialize", "init", "create project", "project structure",
+                      "scaffold", "boilerplate", "initial", "task 1", "html structure"]
+    is_setup_task = task_id == 1 or any(kw in title.lower() or kw in description.lower() for kw in setup_keywords)
+
+    if is_setup_task:
+        return SETUP_PROMPT_TEMPLATE.format(title=title, description=description)
+    else:
+        return SMART_PROMPT_TEMPLATE.format(title=title, description=description)
 
 
 @dataclass
@@ -227,6 +272,26 @@ class OvernightRunner:
         if result.stdout.strip():
             self.log("Warning: Git working directory is not clean", "WARN")
             self.log(f"Uncommitted changes:\n{result.stdout}", "WARN")
+
+        # Check for project config files (warn if missing - Task 1 should create them)
+        config_files = [
+            "package.json",      # Node.js/JavaScript
+            "pyproject.toml",    # Python (modern)
+            "requirements.txt",  # Python (legacy)
+            "Cargo.toml",        # Rust
+            "go.mod",            # Go
+            "app.json",          # Expo
+        ]
+        has_config = any((self.project_path / f).exists() for f in config_files)
+        if not has_config:
+            self.log("=" * 50, "WARN")
+            self.log("WARNING: No project config found (package.json, etc.)", "WARN")
+            self.log("Task 1 MUST create project structure with:", "WARN")
+            self.log("  - package.json (for JS/TS/Expo)", "WARN")
+            self.log("  - pyproject.toml (for Python)", "WARN")
+            self.log("  - Or appropriate config for your project type", "WARN")
+            self.log("Make sure Task 1 includes explicit setup instructions!", "WARN")
+            self.log("=" * 50, "WARN")
 
         # Check disk space (need at least 1GB free)
         disk = psutil.disk_usage(str(self.project_path))
@@ -531,8 +596,8 @@ Fix only what is broken. Keep changes minimal."""
         self.wait_for_ram()
 
         # Build the Aider command
-        # Use smart prompting for smaller models
-        message = enhance_prompt_for_small_model(task.title, task.description, self.model)
+        # Use smart prompting for smaller models (with task_id for setup detection)
+        message = enhance_prompt_for_small_model(task.title, task.description, self.model, task.id)
 
         cmd = [
             str(AIDER_CMD),  # Use wrapper script that activates venv
