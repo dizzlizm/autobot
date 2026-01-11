@@ -1,322 +1,243 @@
-# Overnight Coding Automation with Aider + Gemini
+# Autobot - Overnight Coding Automation
 
-Automated overnight coding using [Aider](https://aider.chat) with Google's Gemini API. Run multiple coding tasks while you sleep, wake up to a detailed report.
+Automated overnight coding using [Aider](https://aider.chat). Queue up tasks, go to sleep, wake up to commits and a report.
 
-## Quick Start
+## What It Does
 
-```bash
-# 1. Run setup (installs Aider, configures Gemini)
-./setup.sh
+`overnight.py` runs Aider in a loop over your task list:
 
-# 2. Source shell config for aliases
-source ~/.bashrc
-
-# 3. Create tasks file
-cp templates/tasks.md ~/projects/my-app/tasks.md
-# Edit tasks.md with your tasks
-
-# 4. Add project context (optional but recommended)
-cp templates/CONVENTIONS.md ~/projects/my-app/
-# Customize CONVENTIONS.md for your project
-
-# 5. Run overnight
-./overnight.py --project ~/projects/my-app --tasks ~/projects/my-app/tasks.md
-
-# 6. Check results in the morning
-cat ~/reports/overnight_$(date +%Y%m%d).md
-```
-
-## Directory Structure
-
-```
-~/
-├── overnight/
-│   ├── overnight.py       # Main runner script
-│   ├── setup.sh           # Installation script
-│   ├── templates/
-│   │   ├── CONVENTIONS.md # Project context template
-│   │   ├── tasks.md       # Task file template
-│   │   └── .aider.conf.yml
-│   ├── systemd/           # Systemd units for scheduling
-│   └── logs/              # Run logs
-├── reports/               # Morning reports
-└── projects/              # Your projects
-    └── my-app/
-        ├── CONVENTIONS.md # Project-specific context
-        ├── tasks.md       # Overnight tasks
-        └── .aider.conf.yml
-```
+1. Parses tasks from a markdown file
+2. Runs each task through Aider
+3. Auto-commits changes
+4. Generates a morning report
 
 ## Usage
-
-### Interactive Mode (Testing)
-
-```bash
-# Quick test with a single task
-cd ~/projects/my-app
-aider --model gemini --yes --message "Add a login feature"
-
-# Or use the alias
-aider-quick "Add a login feature"
-```
-
-### Overnight Mode
 
 ```bash
 # Basic usage
 ./overnight.py --project ~/projects/my-app --tasks tasks.md
 
-# With custom branch name
-./overnight.py --project ~/projects/api --tasks tasks.md --branch overnight-sprint-23
+# With validation (runs tests/lint after each task)
+./overnight.py --project ~/projects/my-app --tasks tasks.md \
+    --test-cmd "npm test" --lint-cmd "npm run lint"
 
-# With custom report path
-./overnight.py --project ~/projects/app --tasks tasks.md --report ~/reports/sprint23.md
+# Hybrid mode: Gemini for complex tasks, local Ollama for simple ones
+./overnight.py --project ~/projects/my-app --tasks tasks.md --hybrid
 
-# Resume interrupted run
-./overnight.py --project ~/projects/app --tasks tasks.md --resume
+# Epic mode: Local Ollama crafts comprehensive prompts, then Gemini executes
+./overnight.py --project ~/projects/my-app --tasks tasks.md --hybrid --prompt-loop
 
-# Dry run (show what would happen)
-./overnight.py --project ~/projects/app --tasks tasks.md --dry-run
+# Resume an interrupted run
+./overnight.py --project ~/projects/my-app --tasks tasks.md --resume
 
-# Use faster/cheaper model
-./overnight.py --project ~/projects/app --tasks tasks.md --model gemini/gemini-2.5-flash
-
-# Custom timeout per task (in seconds)
-./overnight.py --project ~/projects/app --tasks tasks.md --timeout 3600
+# Dry run (see what would happen)
+./overnight.py --project ~/projects/my-app --tasks tasks.md --dry-run
 ```
 
-### Scheduled Runs (systemd)
+## Options
 
-```bash
-# Install systemd units
-./systemd/install-systemd.sh
-
-# Edit service to set your project
-nano ~/.config/systemd/user/overnight-coder.service
-
-# Enable timer (runs at 11 PM daily)
-systemctl --user enable overnight-coder.timer
-systemctl --user start overnight-coder.timer
-
-# Check status
-systemctl --user list-timers
-systemctl --user status overnight-coder.timer
-```
-
-## Configuration
-
-### Gemini API Key
-
-Set your API key in one of these places:
-
-```bash
-# Option 1: Environment variable (in ~/.bashrc)
-export GEMINI_API_KEY="your-key-here"
-
-# Option 2: In ~/overnight/.env
-echo "GEMINI_API_KEY=your-key-here" > ~/overnight/.env
-chmod 600 ~/overnight/.env
-```
-
-Get a free API key at: https://aistudio.google.com/app/apikey
-
-### Model Selection
-
-| Model | Speed | Cost | Use For |
-|-------|-------|------|---------|
-| `gemini` | Fast | $$ | Default, best quality |
-| `gemini-exp` | Fast | Free* | Testing, free tier |
-| `gemini/gemini-2.5-flash` | Faster | $ | Quick tasks |
-
-*Free tier has usage limits
-
-### Project Configuration
-
-Create `.aider.conf.yml` in your project root:
-
-```yaml
-model: gemini
-auto-commits: true
-read:
-  - CONVENTIONS.md
-  - docs/architecture.md
-stream: false
-```
-
-See `templates/.aider.conf.yml` for all options.
+| Flag | Description |
+|------|-------------|
+| `--project`, `-p` | Path to project directory (required) |
+| `--tasks`, `-t` | Path to tasks markdown file (required) |
+| `--branch`, `-b` | Git branch for overnight work (default: `overnight-YYYYMMDD`) |
+| `--model`, `-m` | Aider model (default: `ollama/qwen2.5-coder:3b`) |
+| `--timeout` | Timeout per task in seconds (default: 1800) |
+| `--test-cmd` | Command to run tests after each task |
+| `--lint-cmd` | Command to run linter after each task |
+| `--fix-retries` | Times to retry fixing test/lint failures (default: 2) |
+| `--hybrid` | Use Gemini for complex tasks, local model for simple ones |
+| `--prompt-loop` | Use Ollama to craft better prompts before sending to Gemini |
+| `--max-failures` | Stop after N consecutive failures (default: 3) |
+| `--resume` | Resume from a previous interrupted run |
+| `--dry-run` | Show what would happen without making changes |
+| `--report`, `-r` | Custom path for output report |
 
 ## Task File Format
 
-Tasks are defined in markdown with `##` headings:
+Create a markdown file with `##` headings for each task:
 
 ```markdown
-# Overnight Tasks
+## Set up project structure
+
+Create a React app with:
+- src/ directory with components/
+- Basic App component
+- package.json with scripts
 
 ## Add user authentication
 
-Implement JWT-based authentication with:
-- /api/auth/register endpoint
-- /api/auth/login endpoint
-- Auth middleware for protected routes
-- Tests for all endpoints
+Implement login/logout with:
+- Login form component
+- Auth context for state
+- Protected route wrapper
 
-## Fix issue #42
+## Fix the date picker bug
 
-The form validation isn't showing errors.
-See src/components/Form.tsx
-
-## Improve test coverage
-
-Add tests for userService.ts:
-- createUser() success and error cases
-- updateUser() validation
+The date picker in src/components/DatePicker.tsx
+doesn't handle timezone conversion correctly.
 ```
 
-**Tips:**
-- Be specific about requirements
-- Mention relevant files when known
-- Order tasks logically (dependencies first)
-- Include acceptance criteria
+Tasks are processed in order. Be specific about what you want.
 
-## Project Context (CONVENTIONS.md)
+## Modes
 
-Provide project context so Aider makes better decisions:
+### Default Mode
+Uses a local Ollama model (`ollama/qwen2.5-coder:3b`) for all tasks. Free, runs offline.
 
-```markdown
-# Project: my-app
+### Hybrid Mode (`--hybrid`)
+Automatically selects the right model per task:
+- **Gemini** (`gemini/gemini-2.5-pro`): First 3 tasks, setup, architecture, complex features
+- **Local Ollama**: Polish, tweaks, simple changes
 
-## Tech Stack
-- Frontend: React + TypeScript
-- Backend: FastAPI + Python
-- Database: PostgreSQL
-
-## Commands
-- `npm run dev` - Start frontend
-- `pytest` - Run tests
-
-## Standards
-- All functions need type annotations
-- Use conventional commits
-- Write tests for new features
-
-## Don't Touch
-- .env files
-- migrations/
+```bash
+./overnight.py --project ~/myapp --tasks tasks.md --hybrid
 ```
 
-## Morning Report
+### Prompt Loop Mode (`--prompt-loop`)
+Uses local Ollama to iteratively craft comprehensive prompts before sending to Gemini:
 
-After each run, a report is generated:
+1. Analyzes the task requirements
+2. Searches the web for best practices
+3. Enhances the prompt through multiple iterations
+4. Self-assesses quality (continues until score >= 8/10)
+5. Sends the refined prompt to Gemini
+
+Best combined with hybrid mode:
+```bash
+./overnight.py --project ~/myapp --tasks tasks.md --hybrid --prompt-loop
+```
+
+## Validation
+
+If you provide `--test-cmd` or `--lint-cmd`, overnight.py will:
+1. Run tests/lint after each task
+2. If they fail, ask Aider to fix the issues
+3. Retry up to `--fix-retries` times
+4. Continue to next task even if validation fails (with warnings)
+
+```bash
+# Node.js project
+./overnight.py --project ~/myapp --tasks tasks.md \
+    --test-cmd "npm test" --lint-cmd "npm run lint"
+
+# Python project
+./overnight.py --project ~/myapp --tasks tasks.md \
+    --test-cmd "pytest" --lint-cmd "ruff check ."
+```
+
+## Reports
+
+After each run, a report is saved to `reports/overnight_YYYYMMDD.md`:
 
 ```markdown
 # Overnight Report - 2025-01-11
 
 ## Summary
-- Duration: 6h 23m
+- Duration: 2:45:30
 - Tasks: 4/5 completed
-- Commits: 8
+- Commits: 12
+- Branch: `overnight-20250111`
+
+## Usage & Cost
+- Tokens sent: 45,230
+- Tokens received: 12,100
+- Total cost: $0.1234
 
 ## Results
-✅ Task 1: User authentication (2h 15m, 3 commits)
-✅ Task 2: Dashboard API (1h 30m, 2 commits)
-✅ Task 3: Fix issue #42 (45m, 1 commit)
-❌ Task 5: Email integration - BLOCKED (missing SMTP config)
-
-## Commits
-- abc123: feat: add user registration
-- def456: feat: add login endpoint
-...
+- Task 1: Set up project structure (15m, 3 commits, $0.02)
+- Task 2: Add user authentication (45m, 5 commits, $0.05)
+- Task 3: Fix date picker bug (20m, 2 commits, $0.01)
+- Task 4: Add dashboard (1h, 2 commits, $0.04)
+- Task 5: Email integration - Aider exited with code 1
 ```
 
-## Features
+## Safety Features
 
-### Pre-flight Checks
-- Verifies git repo is clean
-- Checks API key is configured
-- Validates disk space (>1GB)
-- Monitors RAM usage
+- **Checkpoints**: Creates git tags after each successful task
+- **Rollback**: Rolls back to last checkpoint after multiple failures
+- **State recovery**: Saves progress to `overnight_state.json` for resume
+- **RAM monitoring**: Pauses if RAM usage exceeds 75%
+- **Timeouts**: Kills tasks that run too long (default 30 min)
+- **Max failures**: Stops after N consecutive failures (default 3)
 
-### Error Recovery
-- Saves state after each task
-- Resume with `--resume` flag
-- Continues to next task on failure
+## Configuration
 
-### Resource Monitoring
-- Pauses when RAM > 75%
-- Configurable timeouts per task
-- Kills hanging processes
+### API Keys
 
-### Crash Recovery
-State is saved to `overnight_state.json` in the project. Resume with:
+For Gemini (hybrid/cloud mode):
 ```bash
-./overnight.py --project ~/projects/app --tasks tasks.md --resume
+export GEMINI_API_KEY="your-key"
+# Or create .env file in this directory
+```
+
+For Ollama (default/local mode):
+```bash
+# Install Ollama: https://ollama.ai
+ollama pull qwen2.5-coder:3b
+```
+
+### Project Context
+
+Create `CONVENTIONS.md` in your project to give Aider context:
+
+```markdown
+# My App
+
+## Stack
+- React 18 + TypeScript
+- Tailwind CSS
+- Vite
+
+## Commands
+- `npm run dev` - Start dev server
+- `npm test` - Run tests
+
+## Rules
+- Use functional components
+- All functions need TypeScript types
+- No inline styles
+```
+
+## Directory Structure
+
+```
+autobot/
+├── overnight.py      # Main script
+├── aider             # Aider wrapper (activates venv)
+├── logs/             # Run logs
+├── reports/          # Morning reports
+├── templates/        # Task file templates
+│   ├── tasks.md
+│   ├── CONVENTIONS.md
+│   └── .aider.conf.yml
+├── tools/
+│   └── smart-test/   # Auto-detect test/lint commands
+└── systemd/          # For scheduled runs
+```
+
+## Scheduled Runs
+
+Use the systemd units to run overnight automatically:
+
+```bash
+# Install
+./systemd/install-systemd.sh
+
+# Configure your project in the service file
+# Enable timer (runs at 11 PM)
+systemctl --user enable overnight-coder.timer
+systemctl --user start overnight-coder.timer
 ```
 
 ## Troubleshooting
 
-### "GEMINI_API_KEY not set"
-```bash
-# Check if key is set
-echo $GEMINI_API_KEY
+**Aider not found**: Make sure the `aider` wrapper script exists and your venv is set up.
 
-# Set it
-export GEMINI_API_KEY="your-key"
-# Or add to ~/overnight/.env
-```
+**Task times out**: Increase with `--timeout 3600` (1 hour).
 
-### "Aider not found"
-```bash
-# Reinstall
-pipx install aider-chat
-pipx inject aider-chat google-generativeai
+**RAM pausing too often**: Edit `MAX_RAM_PERCENT` in overnight.py (default 75%).
 
-# Or add to PATH
-export PATH="$HOME/.local/bin:$PATH"
-```
+**Bad edits**: Make your task descriptions more specific, add CONVENTIONS.md.
 
-### Task times out
-Increase timeout:
-```bash
-./overnight.py --project ... --tasks ... --timeout 7200  # 2 hours
-```
-
-### High RAM usage pausing too often
-Edit `overnight.py` and change `MAX_RAM_PERCENT`:
-```python
-MAX_RAM_PERCENT = 85  # Allow higher usage
-```
-
-### Aider making bad edits
-1. Make your CONVENTIONS.md more specific
-2. Use more detailed task descriptions
-3. Review and iterate on prompts
-
-## Aider Command Reference
-
-```bash
-# Basic interactive mode
-aider --model gemini
-
-# Single task (non-interactive)
-aider --model gemini --yes --message "your task"
-
-# With conventions file
-aider --model gemini --read CONVENTIONS.md
-
-# List available models
-aider --list-models gemini/
-```
-
-Key flags for overnight use:
-- `--yes` - Auto-accept prompts
-- `--auto-commits` - Commit after changes
-- `--message "task"` - Run single task then exit
-- `--no-stream` - Don't stream output
-- `--read FILE` - Load context file (read-only)
-
-## Links
-
-- [Aider Documentation](https://aider.chat/docs/)
-- [Aider Scripting Guide](https://aider.chat/docs/scripting.html)
-- [Gemini API](https://ai.google.dev/gemini-api/docs)
-- [Get Gemini API Key](https://aistudio.google.com/app/apikey)
+**API errors**: Check your GEMINI_API_KEY. For local-only, use the default Ollama model.
