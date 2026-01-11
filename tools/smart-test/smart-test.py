@@ -37,6 +37,12 @@ def detect_project(project_path: Path) -> dict:
             pkg = json.loads(pkg_json.read_text())
             deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
 
+            # Expo/React Native detection (check before generic react)
+            if "expo" in deps:
+                types.append("expo")
+            if "react-native" in deps:
+                types.append("react-native")
+
             if "react" in deps: types.append("react")
             if "vue" in deps: types.append("vue")
             if "express" in deps: types.append("express")
@@ -45,6 +51,17 @@ def detect_project(project_path: Path) -> dict:
             if "mocha" in deps: types.append("mocha")
             if "vitest" in deps: types.append("vitest")
             if "eslint" in deps: types.append("eslint")
+        except:
+            pass
+
+    # Also check for app.json (Expo config)
+    app_json = project_path / "app.json"
+    if app_json.exists():
+        try:
+            app_config = json.loads(app_json.read_text())
+            if "expo" in app_config:
+                if "expo" not in types:
+                    types.append("expo")
         except:
             pass
 
@@ -74,6 +91,17 @@ def get_test_command(project_path: Path, info: dict) -> str | None:
     """Get the appropriate test command for the project."""
     types = info["types"]
 
+    # Expo/React Native: run jest if available, otherwise validate with export
+    if "expo" in types:
+        pkg_json = project_path / "package.json"
+        if pkg_json.exists():
+            pkg = json.loads(pkg_json.read_text())
+            test_script = pkg.get("scripts", {}).get("test", "")
+            if test_script and "no test specified" not in test_script:
+                return "npm test"
+        # No tests configured - use expo export as build validation
+        return "npx expo export --platform web --output-dir /tmp/expo-test-build"
+
     if any(t in types for t in ["jest", "vitest", "mocha"]):
         return "npm test"
 
@@ -99,6 +127,18 @@ def get_test_command(project_path: Path, info: dict) -> str | None:
 def get_lint_command(project_path: Path, info: dict) -> str | None:
     """Get the appropriate lint command for the project."""
     types = info["types"]
+
+    # Expo: run expo doctor + typescript check
+    if "expo" in types:
+        cmds = ["npx expo doctor"]
+        if "typescript" in types:
+            cmds.append("npx tsc --noEmit")
+        pkg_json = project_path / "package.json"
+        if pkg_json.exists():
+            pkg = json.loads(pkg_json.read_text())
+            if "lint" in pkg.get("scripts", {}):
+                cmds.append("npm run lint")
+        return " && ".join(cmds)
 
     if "typescript" in types:
         return "npx tsc --noEmit"

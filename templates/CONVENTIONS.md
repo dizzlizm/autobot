@@ -16,6 +16,12 @@ Brief description of what this project does.
 - Styling: Tailwind / CSS Modules / styled-components
 - State: Redux / Zustand / Context API
 
+### Mobile (Expo/React Native)
+- Framework: Expo SDK [version]
+- Router: Expo Router / React Navigation
+- UI: React Native Paper / NativeWind / etc.
+- Storage: AsyncStorage / Expo SecureStore
+
 ### Backend (if applicable)
 - Framework: FastAPI / Express / Django / etc.
 - Language: Python / TypeScript / Go
@@ -42,12 +48,19 @@ src/
 ## Commands
 
 ```bash
-# Development
+# Development (Web)
 npm run dev          # Start development server
 npm run build        # Build for production
 npm run lint         # Run linter
 npm run test         # Run tests
 npm run typecheck    # Run TypeScript checks
+
+# Development (Expo/Mobile)
+npx expo start       # Start dev server (scan QR with Expo Go)
+npx expo start --ios # Start iOS simulator
+npx expo start --android # Start Android emulator
+npx expo doctor      # Check for issues
+npx expo export      # Build web bundle (validation)
 
 # Backend (if separate)
 uvicorn main:app --reload   # Start FastAPI server
@@ -119,6 +132,57 @@ These files/directories should not be modified by Aider:
 | Stripe | Payments | https://stripe.com/docs |
 | SendGrid | Email | https://docs.sendgrid.com |
 | Redis | Caching | https://redis.io/docs |
+
+## Mobile/Expo Patterns
+
+### Navigation (Expo Router)
+```typescript
+// File-based routing in app/ directory
+// app/(tabs)/index.tsx -> "/"
+// app/(tabs)/profile.tsx -> "/profile"
+// app/settings/[id].tsx -> "/settings/:id"
+
+// Navigation
+import { router } from 'expo-router';
+router.push('/profile');
+router.replace('/login');
+router.back();
+```
+
+### Native Components
+```typescript
+// Use React Native components, not web HTML
+import { View, Text, Pressable, ScrollView } from 'react-native';
+
+// NOT <div>, <span>, <button>, <p>
+// Use View for containers, Text for all text, Pressable for buttons
+```
+
+### Platform-Specific Code
+```typescript
+import { Platform } from 'react-native';
+
+const styles = {
+  shadow: Platform.select({
+    ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 } },
+    android: { elevation: 4 },
+  }),
+};
+```
+
+### Safe Areas
+```typescript
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+// Always wrap screens in SafeAreaView for notches/status bars
+export default function Screen() {
+  return (
+    <SafeAreaView style={{ flex: 1 }}>
+      {/* content */}
+    </SafeAreaView>
+  );
+}
+```
 
 ## Common Patterns
 
