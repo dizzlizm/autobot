@@ -95,17 +95,21 @@ Automatically selects the right model per task:
 ```
 
 ### Prompt Loop Mode (`--prompt-loop`)
-Uses local Ollama to iteratively craft comprehensive prompts before sending to Gemini:
+Uses local Ollama to iteratively craft comprehensive prompts before sending to any model:
 
 1. Analyzes the task requirements
 2. Searches the web for best practices
 3. Enhances the prompt through multiple iterations
 4. Self-assesses quality (continues until score >= 8/10)
-5. Sends the refined prompt to Gemini
+5. Sends the refined prompt to the target model
 
-Best combined with hybrid mode:
+Works with any mode:
 ```bash
+# With hybrid (Gemini + Ollama)
 ./overnight.py --project ~/myapp --tasks tasks.md --hybrid --prompt-loop
+
+# With just local Ollama (all tasks get enhanced prompts)
+./overnight.py --project ~/myapp --tasks tasks.md --prompt-loop
 ```
 
 ## Validation

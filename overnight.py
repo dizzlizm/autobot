@@ -236,9 +236,23 @@ class PromptLoopEngine:
                 text=True,
                 timeout=PROMPT_LOOP_TIMEOUT
             )
-            return result.stdout.strip()
+            response = result.stdout.strip()
+
+            # Log if something went wrong
+            if result.returncode != 0:
+                self.log(f"Ollama returned exit code {result.returncode}", "WARN")
+                if result.stderr:
+                    self.log(f"  stderr: {result.stderr[:200]}", "WARN")
+            if not response:
+                self.log("Ollama returned empty response", "WARN")
+                if result.stderr:
+                    self.log(f"  stderr: {result.stderr[:200]}", "WARN")
+            elif len(response) < 50:
+                self.log(f"Ollama response very short: {response[:100]}", "WARN")
+
+            return response
         except subprocess.TimeoutExpired:
-            self.log("Ollama call timed out", "WARN")
+            self.log(f"Ollama call timed out after {PROMPT_LOOP_TIMEOUT}s", "WARN")
             return ""
         except Exception as e:
             self.log(f"Ollama call failed: {e}", "ERROR")
@@ -1269,18 +1283,18 @@ Fix only what is broken. Keep changes minimal."""
             self.log(f"  Mode: SINGLE MODEL")
             self.log(f"  Using: {task_model}")
 
-        # Build the prompt - use prompt loop if enabled for Gemini tasks
+        # Build the prompt - use prompt loop if enabled
         message = None
 
-        # Use prompt loop for Gemini/cloud model tasks (the whole point is epic prompts for the smart model)
-        if self.prompt_loop and self.prompt_engine and "gemini" in task_model.lower():
+        # Use prompt loop to craft comprehensive prompts (for any model)
+        if self.prompt_loop and self.prompt_engine:
             print()
             self.log("-" * 40)
             self.log("PROMPT BUILDER: Ollama Prompt Loop")
             self.log("-" * 40)
             self.log(f"  Engine: {self.prompt_loop_model}")
             self.log(f"  Strategy: Iterative refinement + web research")
-            self.log(f"  Goal: Craft comprehensive prompt for Gemini")
+            self.log(f"  Target Model: {task_model}")
             print()
             try:
                 message = self.prompt_engine.run_loop(task.title, task.description)
