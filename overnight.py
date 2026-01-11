@@ -28,10 +28,34 @@ import psutil
 
 # Configuration
 DEFAULT_MODEL = "ollama/qwen2.5-coder:3b"  # Local Ollama model (no API key needed)
+SMART_MODEL = "gemini/gemini-2.0-flash"     # Cloud model for complex tasks (hybrid mode)
 DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
 STATE_FILE = "overnight_state.json"
+
+# Keywords that indicate a task needs the smarter model
+COMPLEX_TASK_KEYWORDS = [
+    # Setup & Architecture
+    "setup", "initialize", "init", "scaffold", "boilerplate", "architecture",
+    "structure", "foundation", "core", "design", "concept",
+    # Critical Systems
+    "game loop", "game engine", "state management", "collision", "physics",
+    "animation system", "particle system", "audio system", "sound system",
+    # Complex Features
+    "algorithm", "optimize", "performance", "refactor", "debug", "fix bug",
+    "integration", "api", "database", "authentication", "security",
+    # Creative/Design
+    "creative", "invent", "original", "unique", "vision",
+]
+
+# Keywords that indicate a simple task (use cheap local model)
+SIMPLE_TASK_KEYWORDS = [
+    "polish", "tweak", "adjust", "minor", "small", "simple",
+    "color", "style", "visual", "ui ", "button", "text",
+    "add comment", "documentation", "readme", "cleanup",
+    "rename", "move", "copy", "delete", "remove",
+]
 
 # Use script directory for logs/reports
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -130,6 +154,38 @@ def enhance_prompt_for_small_model(title: str, description: str, model: str, tas
         return SMART_PROMPT_TEMPLATE.format(title=title, description=description)
 
 
+def select_model_for_task(task_id: int, title: str, description: str,
+                          base_model: str, hybrid_mode: bool) -> tuple[str, str]:
+    """Select the appropriate model for a task based on complexity.
+
+    Returns: (model_name, reason)
+
+    Hybrid mode strategy:
+    - Task 1-3: Always use smart model (foundation is critical)
+    - Complex tasks: Use smart model (keywords detected)
+    - Simple tasks: Use local model (save money)
+    """
+    if not hybrid_mode:
+        return base_model, "hybrid mode disabled"
+
+    combined_text = f"{title} {description}".lower()
+
+    # First 3 tasks are always critical - use smart model
+    if task_id <= 3:
+        return SMART_MODEL, "early task (foundation)"
+
+    # Check for simple task keywords first (override complex if explicitly simple)
+    if any(kw in combined_text for kw in SIMPLE_TASK_KEYWORDS):
+        return base_model, "simple task detected"
+
+    # Check for complex task keywords
+    if any(kw in combined_text for kw in COMPLEX_TASK_KEYWORDS):
+        return SMART_MODEL, "complex task detected"
+
+    # Default to local model for cost savings
+    return base_model, "default (cost savings)"
+
+
 @dataclass
 class Usage:
     """Tracks token usage and cost."""
@@ -195,6 +251,7 @@ class OvernightRunner:
         test_cmd: Optional[str] = None,
         lint_cmd: Optional[str] = None,
         fix_retries: int = 2,
+        hybrid_mode: bool = False,
     ):
         self.project_path = Path(project_path).resolve()
         self.tasks_file = Path(tasks_file).resolve()
@@ -207,6 +264,7 @@ class OvernightRunner:
         self.test_cmd = test_cmd
         self.lint_cmd = lint_cmd
         self.fix_retries = fix_retries  # How many times to retry if tests fail
+        self.hybrid_mode = hybrid_mode  # Use Gemini for complex, Ollama for simple
 
         self.state: Optional[OvernightState] = None
         self.log_file: Optional[Path] = None
@@ -644,13 +702,21 @@ Fix only what is broken. Keep changes minimal."""
         # Wait for RAM if needed
         self.wait_for_ram()
 
+        # Select model based on task complexity (hybrid mode)
+        task_model, model_reason = select_model_for_task(
+            task.id, task.title, task.description,
+            self.model, self.hybrid_mode
+        )
+        if self.hybrid_mode:
+            self.log(f"Model: {task_model} ({model_reason})")
+
         # Build the Aider command
         # Use smart prompting for smaller models (with task_id for setup detection)
-        message = enhance_prompt_for_small_model(task.title, task.description, self.model, task.id)
+        message = enhance_prompt_for_small_model(task.title, task.description, task_model, task.id)
 
         cmd = [
             str(AIDER_CMD),  # Use wrapper script that activates venv
-            "--model", self.model,
+            "--model", task_model,
             "--yes",  # Auto-accept all prompts
             "--auto-commits",  # Auto-commit changes
             "--no-stream",  # Don't stream output (better for logs)
@@ -905,6 +971,8 @@ Fix only what is broken. Keep changes minimal."""
         self.log(f"Tasks: {self.tasks_file}")
         self.log(f"Branch: {self.branch}")
         self.log(f"Model: {self.model}")
+        if self.hybrid_mode:
+            self.log(f"Hybrid Mode: ON (complex={SMART_MODEL}, simple={self.model})")
 
         # Pre-flight checks
         if not self.preflight_checks():
@@ -1079,6 +1147,11 @@ Examples:
         default=2,
         help="Number of times to ask Aider to fix failing tests/lint (default: 2)"
     )
+    parser.add_argument(
+        "--hybrid",
+        action="store_true",
+        help=f"Hybrid mode: use {SMART_MODEL} for complex tasks, local model for simple tasks (saves money)"
+    )
 
     args = parser.parse_args()
 
@@ -1094,6 +1167,7 @@ Examples:
         test_cmd=args.test_cmd,
         lint_cmd=args.lint_cmd,
         fix_retries=args.fix_retries,
+        hybrid_mode=args.hybrid,
     )
 
     # Handle signals for graceful shutdown
