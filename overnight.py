@@ -102,7 +102,7 @@ Think step-by-step:
 Now implement the task."""
 
 # Prompt Loop Configuration
-PROMPT_LOOP_MODEL = "ollama/qwen2.5:3b"  # General model for reasoning/writing (not coder)
+PROMPT_LOOP_MODEL = "ollama/qwen2.5-coder:3b"  # Same as DEFAULT_MODEL to avoid model swapping
 PROMPT_LOOP_MAX_ITERATIONS = 20  # Safety limit (but model decides when done)
 PROMPT_LOOP_TIMEOUT = 120  # Timeout per iteration in seconds
 
