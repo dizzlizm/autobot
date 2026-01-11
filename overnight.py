@@ -1192,14 +1192,23 @@ Fix only what is broken. Keep changes minimal."""
             return False
 
     def validate_task(self, task: Task) -> bool:
-        """Run tests and lint after a task, attempt fixes if needed."""
-        # Always try validation - smart-test will auto-detect if no cmds specified
+        """Run tests and lint after a task, attempt fixes if needed.
+
+        Uses smart-test for auto-detection when no explicit commands provided.
+        """
+        # Check if we have any validation available
+        has_lint = self.lint_cmd or SMART_TEST.exists()
+        has_test = self.test_cmd or SMART_TEST.exists()
+
+        if not has_lint and not has_test:
+            self.log("  No validation tools available (skipping)")
+            return True
 
         for attempt in range(self.fix_retries + 1):
             all_passed = True
 
             # Run lint first (usually faster)
-            if self.lint_cmd:
+            if has_lint:
                 lint_ok, lint_output = self.run_lint()
                 if not lint_ok:
                     all_passed = False
@@ -1208,7 +1217,7 @@ Fix only what is broken. Keep changes minimal."""
                         continue
 
             # Run tests
-            if self.test_cmd:
+            if has_test:
                 test_ok, test_output = self.run_tests()
                 if not test_ok:
                     all_passed = False
@@ -1218,7 +1227,7 @@ Fix only what is broken. Keep changes minimal."""
 
             if all_passed:
                 if attempt > 0:
-                    self.log(f"Validation passed after {attempt} fix attempts")
+                    self.log(f"  Validation passed after {attempt} fix attempts")
                 return True
 
         self.log("Validation failed after all fix attempts", "ERROR")
@@ -1415,6 +1424,16 @@ Fix only what is broken. Keep changes minimal."""
                 self.log("-" * 40)
                 self.log("VALIDATION")
                 self.log("-" * 40)
+                # Show what validation will be used
+                if self.test_cmd:
+                    self.log(f"  Tests: {self.test_cmd}")
+                elif SMART_TEST.exists():
+                    self.log(f"  Tests: smart-test (auto-detect)")
+                if self.lint_cmd:
+                    self.log(f"  Lint: {self.lint_cmd}")
+                elif SMART_TEST.exists():
+                    self.log(f"  Lint: smart-test (auto-detect)")
+
                 if self.validate_task(task):
                     task.status = "completed"
                     self.log(f"  Result: PASSED")
