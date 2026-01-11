@@ -40,7 +40,7 @@ import psutil
 
 # Configuration
 DEFAULT_MODEL = "ollama/qwen2.5-coder:3b"  # Local Ollama model (~2GB VRAM, fits 4GB cards)
-SMART_MODEL = "gemini/gemini-2.5-pro"       # Cloud model for complex tasks (hybrid mode)
+SMART_MODEL = "gemini/gemini-3-pro-preview"  # Cloud model for complex tasks (hybrid mode)
 DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
@@ -102,7 +102,7 @@ Think step-by-step:
 Now implement the task."""
 
 # Prompt Loop Configuration
-PROMPT_LOOP_MODEL = "ollama/qwen2.5:3b"  # General model for reasoning/writing (not coder)
+PROMPT_LOOP_MODEL = "ollama/qwen2.5-coder:3b"  # Same as DEFAULT_MODEL to avoid model swapping
 PROMPT_LOOP_MAX_ITERATIONS = 20  # Safety limit (but model decides when done)
 PROMPT_LOOP_TIMEOUT = 120  # Timeout per iteration in seconds
 
@@ -1162,8 +1162,8 @@ coverage/
 Implement a working solution."""
 
     def run_aider_fix(self, error_output: str, fix_type: str) -> bool:
-        """Ask Aider to fix test/lint failures."""
-        self.log(f"Asking Aider to fix {fix_type} failures...")
+        """Ask Aider to fix test/lint failures using local model (cheaper)."""
+        self.log(f"Asking local Ollama to fix {fix_type} failures...")
 
         # Truncate error output if too long
         if len(error_output) > 4000:
@@ -1183,9 +1183,13 @@ Implement a working solution."""
 
 Fix only what is broken. Keep changes minimal."""
 
+        # Always use local coder model for fixes (saves Gemini tokens)
+        fix_model = DEFAULT_MODEL
+        self.log(f"  Using: {fix_model}")
+
         cmd = [
             str(AIDER_CMD),
-            "--model", self.model,
+            "--model", fix_model,
             "--yes",
             "--auto-commits",
             "--no-stream",

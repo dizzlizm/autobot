@@ -87,7 +87,7 @@ Uses a local Ollama model (`ollama/qwen2.5-coder:3b`) for all tasks. Free, runs 
 
 ### Hybrid Mode (`--hybrid`)
 Automatically selects the right model per task:
-- **Gemini** (`gemini/gemini-2.5-pro`): First 3 tasks, setup, architecture, complex features
+- **Gemini** (`gemini/gemini-3-pro-preview`): First 3 tasks, setup, architecture, complex features
 - **Local Ollama**: Polish, tweaks, simple changes
 
 ```bash
