@@ -130,7 +130,16 @@ class PromptLoopEngine:
         """Log prompt loop activity."""
         if self.verbose:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            print(f"  [{timestamp}] [{level}] {message}")
+            # Use different prefixes for clarity
+            prefix = {
+                "LOOP": "  [LOOP]",
+                "SEARCH": "    [WEB]",
+                "OLLAMA": "    [OLLAMA]",
+                "WARN": "  [WARN]",
+                "ERROR": "  [ERROR]",
+                "ASSESS": "    [ASSESS]",
+            }.get(level, f"  [{level}]")
+            print(f"{prefix} {timestamp} {message}")
 
     def web_search(self, query: str, num_results: int = 5) -> list[dict]:
         """
@@ -138,9 +147,10 @@ class PromptLoopEngine:
         Returns list of {title, url, snippet} dicts.
         """
         if query in self.search_cache:
+            self.log(f"(cached) {query}", "SEARCH")
             return self.search_cache[query]
 
-        self.log(f"Searching: {query}")
+        self.log(f"Searching: {query}", "SEARCH")
 
         try:
             # Use DuckDuckGo HTML search (no API needed)
@@ -179,7 +189,7 @@ class PromptLoopEngine:
                 })
 
             self.search_cache[query] = results
-            self.log(f"Found {len(results)} results")
+            self.log(f"Found {len(results)} results", "SEARCH")
             return results
 
         except Exception as e:
@@ -236,6 +246,7 @@ class PromptLoopEngine:
 
     def analyze_task(self, title: str, description: str) -> dict:
         """Have Ollama analyze the task and identify what information would help."""
+        self.log("Asking Ollama to analyze task requirements...", "OLLAMA")
         prompt = f"""Analyze this coding task and identify what additional information would make the prompt more comprehensive.
 
 TASK TITLE: {title}
@@ -395,45 +406,51 @@ Only respond with JSON."""
 
         Returns the final comprehensive prompt.
         """
-        self.log(f"Starting prompt loop for: {title}")
+        self.log(f"Starting prompt loop for: {title[:60]}...")
         self.iteration_history = []
 
         original_task = f"{title}\n\n{description}"
         current_prompt = original_task
 
         # Initial analysis
-        self.log("Analyzing task requirements...")
+        self.log("Phase 1: Task Analysis")
         analysis = self.analyze_task(title, description)
-        self.log(f"Task type: {analysis.get('task_type', 'unknown')}")
-        self.log(f"Technologies: {', '.join(analysis.get('technologies', []))}")
+        self.log(f"  Task type: {analysis.get('task_type', 'unknown')}")
+        self.log(f"  Technologies: {', '.join(analysis.get('technologies', []) or ['general'])}")
+        search_queries = analysis.get('search_queries', [])
+        self.log(f"  Planned searches: {len(search_queries)}")
 
         # Gather web knowledge
-        self.log("Gathering web knowledge...")
+        self.log("Phase 2: Web Research")
         web_knowledge = self.gather_web_knowledge(analysis)
         if web_knowledge:
-            self.log(f"Collected {len(web_knowledge)} chars of research")
+            self.log(f"  Collected {len(web_knowledge):,} chars of research")
 
+        self.log("Phase 3: Iterative Enhancement")
         iteration = 0
         while iteration < PROMPT_LOOP_MAX_ITERATIONS:
             iteration += 1
-            self.log(f"--- Iteration {iteration} ---")
+            self.log(f"")
+            self.log(f"Iteration {iteration}/{PROMPT_LOOP_MAX_ITERATIONS}")
 
             # Enhance the prompt
-            self.log("Enhancing prompt...")
+            self.log("  Asking Ollama to enhance prompt...", "OLLAMA")
             enhanced = self.enhance_prompt(title, description, analysis, web_knowledge, iteration)
 
             if not enhanced or len(enhanced) < 100:
-                self.log("Enhancement failed, using previous version", "WARN")
+                self.log("  Enhancement failed, using previous version", "WARN")
                 enhanced = current_prompt
+            else:
+                self.log(f"  Generated {len(enhanced):,} char prompt", "OLLAMA")
 
             # Assess readiness
-            self.log("Assessing readiness...")
+            self.log("  Assessing prompt quality...", "ASSESS")
             assessment = self.assess_readiness(original_task, enhanced, iteration)
 
             avg_score = assessment.get('average_score', 0)
             is_ready = assessment.get('is_ready', False)
 
-            self.log(f"Score: {avg_score:.1f}/10 | Ready: {is_ready}")
+            self.log(f"  Quality Score: {avg_score:.1f}/10 | Ready: {'YES' if is_ready else 'NO'}", "ASSESS")
 
             self.iteration_history.append({
                 'iteration': iteration,
@@ -446,13 +463,16 @@ Only respond with JSON."""
             current_prompt = enhanced
 
             if is_ready:
-                self.log(f"Prompt ready after {iteration} iterations!")
+                self.log(f"")
+                self.log(f"Prompt READY after {iteration} iteration(s)!")
                 break
 
             # Add improvements feedback for next iteration
             if assessment.get('improvements_needed'):
-                improvements = "\n".join(f"- {imp}" for imp in assessment['improvements_needed'])
-                self.log(f"Improvements needed:\n{improvements}")
+                improvements = assessment['improvements_needed'][:3]  # Show max 3
+                self.log(f"  Improvements needed:", "ASSESS")
+                for imp in improvements:
+                    self.log(f"    - {imp[:80]}{'...' if len(imp) > 80 else ''}", "ASSESS")
 
                 # Feed improvements back into analysis for next round
                 analysis['missing_details'] = assessment['improvements_needed']
@@ -460,7 +480,8 @@ Only respond with JSON."""
         # Final formatting
         final_prompt = self._format_final_prompt(title, current_prompt, analysis)
 
-        self.log(f"Final prompt: {len(final_prompt)} chars, {iteration} iterations")
+        self.log(f"")
+        self.log(f"Phase 4: Final prompt ready ({len(final_prompt):,} chars)")
         return final_prompt
 
     def _format_final_prompt(self, title: str, enhanced_prompt: str, analysis: dict) -> str:
@@ -1206,7 +1227,13 @@ Fix only what is broken. Keep changes minimal."""
 
     def run_aider_task(self, task: Task) -> bool:
         """Run Aider for a single task."""
-        self.log(f"Starting task {task.id}: {task.title}")
+        # Clear visual marker for new task
+        print()
+        self.log("=" * 60)
+        self.log(f"TASK {task.id} OF {len(self.state.tasks)}: {task.title}")
+        self.log("=" * 60)
+        self.log(f"Description: {task.description[:200]}{'...' if len(task.description) > 200 else ''}")
+
         task.status = "in_progress"
         task.start_time = datetime.now().isoformat()
 
@@ -1221,31 +1248,59 @@ Fix only what is broken. Keep changes minimal."""
             task.id, task.title, task.description,
             self.model, self.hybrid_mode
         )
+        print()
+        self.log("-" * 40)
+        self.log("MODEL SELECTION")
+        self.log("-" * 40)
         if self.hybrid_mode:
-            self.log(f"Model: {task_model} ({model_reason})")
+            self.log(f"  Mode: HYBRID (smart + local)")
+            self.log(f"  Selected: {task_model}")
+            self.log(f"  Reason: {model_reason}")
+        else:
+            self.log(f"  Mode: SINGLE MODEL")
+            self.log(f"  Using: {task_model}")
 
         # Build the prompt - use prompt loop if enabled for Gemini tasks
         message = None
 
         # Use prompt loop for Gemini/cloud model tasks (the whole point is epic prompts for the smart model)
         if self.prompt_loop and self.prompt_engine and "gemini" in task_model.lower():
-            self.log("=" * 50)
-            self.log("PROMPT LOOP: Crafting epic prompt with Ollama...")
-            self.log("=" * 50)
+            print()
+            self.log("-" * 40)
+            self.log("PROMPT BUILDER: Ollama Prompt Loop")
+            self.log("-" * 40)
+            self.log(f"  Engine: {self.prompt_loop_model}")
+            self.log(f"  Strategy: Iterative refinement + web research")
+            self.log(f"  Goal: Craft comprehensive prompt for Gemini")
+            print()
             try:
                 message = self.prompt_engine.run_loop(task.title, task.description)
                 stats = self.prompt_engine.get_stats()
-                self.log(f"Prompt loop complete: {stats.get('total_iterations', 0)} iterations, "
-                        f"score {stats.get('final_score', 0):.1f}/10, "
-                        f"{stats.get('searches_performed', 0)} web searches")
-                self.log("=" * 50)
+                print()
+                self.log("-" * 40)
+                self.log("PROMPT LOOP COMPLETE")
+                self.log("-" * 40)
+                self.log(f"  Iterations: {stats.get('total_iterations', 0)}")
+                self.log(f"  Quality Score: {stats.get('final_score', 0):.1f}/10")
+                self.log(f"  Web Searches: {stats.get('searches_performed', 0)}")
+                self.log(f"  Final Prompt: {stats.get('final_prompt_length', 0):,} chars")
             except Exception as e:
                 self.log(f"Prompt loop failed: {e}, falling back to standard prompt", "WARN")
                 message = None
 
         # Fallback to standard prompting
         if message is None:
+            print()
+            self.log("-" * 40)
+            self.log("PROMPT BUILDER: Standard Template")
+            self.log("-" * 40)
             message = enhance_prompt_for_small_model(task.title, task.description, task_model, task.id)
+            # Detect which template was used
+            is_setup = task.id == 1 or any(kw in task.title.lower() or kw in task.description.lower()
+                                           for kw in ["setup", "initialize", "init", "scaffold"])
+            template_type = "Setup Template" if is_setup else "Smart Template"
+            self.log(f"  Template: {template_type}")
+            self.log(f"  Prompt Length: {len(message):,} chars")
 
         cmd = [
             str(AIDER_CMD),  # Use wrapper script that activates venv
@@ -1273,9 +1328,25 @@ Fix only what is broken. Keep changes minimal."""
             return True
 
         try:
+            # Show what we're sending to the model
+            print()
+            self.log("-" * 40)
+            self.log(f"SENDING TO: {task_model}")
+            self.log("-" * 40)
+            # Show first ~500 chars of the prompt as a preview
+            preview_len = 500
+            prompt_preview = message[:preview_len].replace('\n', '\n  ')
+            self.log(f"  Prompt Preview:")
+            for line in prompt_preview.split('\n')[:15]:  # Max 15 lines
+                self.log(f"    {line}")
+            if len(message) > preview_len:
+                self.log(f"    ... ({len(message) - preview_len:,} more chars)")
+            print()
+
             # Run Aider with real-time output streaming
-            self.log(f"Running: {' '.join(cmd[:4])}...")
-            print("-" * 40)
+            self.log("-" * 40)
+            self.log(f"AIDER OUTPUT ({task_model})")
+            self.log("-" * 40)
 
             process = subprocess.Popen(
                 cmd,
@@ -1305,7 +1376,6 @@ Fix only what is broken. Keep changes minimal."""
             # Get return code
             returncode = process.returncode
             task.aider_output = "".join(output_lines)
-            print("-" * 40)
 
             # Parse usage from output
             usage = self.parse_usage(task.aider_output)
@@ -1317,25 +1387,46 @@ Fix only what is broken. Keep changes minimal."""
             new_commits = self.get_commits_since(commit_before)
             task.commits = new_commits
 
+            # Summary of what the model did
+            print()
+            self.log("-" * 40)
+            self.log(f"RESPONSE SUMMARY ({task_model})")
+            self.log("-" * 40)
+            self.log(f"  Exit Code: {returncode}")
+            self.log(f"  Commits Made: {len(new_commits)}")
+            for commit in new_commits[:5]:  # Show first 5 commits
+                self.log(f"    - {commit}")
+            if len(new_commits) > 5:
+                self.log(f"    ... and {len(new_commits) - 5} more")
+            if usage.tokens_sent:
+                self.log(f"  Tokens Sent: {usage.tokens_sent:,}")
+                self.log(f"  Tokens Received: {usage.tokens_received:,}")
+                self.log(f"  Cost: ${usage.cost:.4f}")
+
             if returncode == 0 or new_commits:
                 # Aider completed (or made progress)
-                usage_str = f", {usage.tokens_sent + usage.tokens_received:,} tokens, ${usage.cost:.4f}" if usage.tokens_sent else ""
-                self.log(f"Task {task.id} aider done with {len(new_commits)} commits{usage_str}")
+                self.log(f"  Status: SUCCESS")
 
                 if returncode != 0:
                     self.state.warnings.append(f"Task {task.id}: Aider returned non-zero exit code")
 
                 # Run validation (tests/lint)
+                print()
+                self.log("-" * 40)
+                self.log("VALIDATION")
+                self.log("-" * 40)
                 if self.validate_task(task):
                     task.status = "completed"
-                    self.log(f"Task {task.id} completed and validated")
+                    self.log(f"  Result: PASSED")
+                    self.log(f"  Task {task.id} complete!")
                 else:
                     task.status = "completed"  # Still mark complete but with warnings
-                    self.log(f"Task {task.id} completed but validation failed", "WARN")
+                    self.log(f"  Result: FAILED (but continuing)", "WARN")
             else:
                 task.status = "failed"
                 task.error = f"Aider exited with code {returncode}"
-                self.log(f"Task {task.id} failed: {task.error}", "ERROR")
+                self.log(f"  Status: FAILED")
+                self.log(f"  Error: {task.error}", "ERROR")
 
         except subprocess.TimeoutExpired:
             task.status = "failed"
