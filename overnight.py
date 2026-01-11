@@ -1162,8 +1162,8 @@ coverage/
 Implement a working solution."""
 
     def run_aider_fix(self, error_output: str, fix_type: str) -> bool:
-        """Ask Aider to fix test/lint failures."""
-        self.log(f"Asking Aider to fix {fix_type} failures...")
+        """Ask Aider to fix test/lint failures using local model (cheaper)."""
+        self.log(f"Asking local Ollama to fix {fix_type} failures...")
 
         # Truncate error output if too long
         if len(error_output) > 4000:
@@ -1183,9 +1183,13 @@ Implement a working solution."""
 
 Fix only what is broken. Keep changes minimal."""
 
+        # Always use local coder model for fixes (saves Gemini tokens)
+        fix_model = DEFAULT_MODEL
+        self.log(f"  Using: {fix_model}")
+
         cmd = [
             str(AIDER_CMD),
-            "--model", self.model,
+            "--model", fix_model,
             "--yes",
             "--auto-commits",
             "--no-stream",
