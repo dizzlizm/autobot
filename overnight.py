@@ -252,6 +252,7 @@ class OvernightRunner:
         lint_cmd: Optional[str] = None,
         fix_retries: int = 2,
         hybrid_mode: bool = False,
+        max_failures: int = 3,
     ):
         self.project_path = Path(project_path).resolve()
         self.tasks_file = Path(tasks_file).resolve()
@@ -265,6 +266,8 @@ class OvernightRunner:
         self.lint_cmd = lint_cmd
         self.fix_retries = fix_retries  # How many times to retry if tests fail
         self.hybrid_mode = hybrid_mode  # Use Gemini for complex, Ollama for simple
+        self.max_failures = max_failures  # Stop after N consecutive failures
+        self.consecutive_failures = 0  # Track consecutive failures
 
         self.state: Optional[OvernightState] = None
         self.log_file: Optional[Path] = None
@@ -611,6 +614,101 @@ coverage/
             cmd = f"python3 {SMART_TEST} lint {self.project_path}"
             return self.run_command(cmd, "Lint (auto-detected)")
         return True, ""  # No lint tool available
+
+    def run_build(self) -> tuple[bool, str]:
+        """Run build verification - auto-detects build command."""
+        if SMART_TEST.exists():
+            cmd = f"python3 {SMART_TEST} build {self.project_path}"
+            return self.run_command(cmd, "Build verification")
+
+        # Fallback: check for common build commands
+        package_json = self.project_path / "package.json"
+        if package_json.exists():
+            try:
+                import json
+                with open(package_json) as f:
+                    pkg = json.load(f)
+                if "build" in pkg.get("scripts", {}):
+                    return self.run_command("npm run build", "Build")
+            except:
+                pass
+
+        return True, ""  # No build command found, assume OK
+
+    def create_checkpoint(self, task_id: int) -> str:
+        """Create a git tag checkpoint after successful task."""
+        tag_name = f"checkpoint-task-{task_id}"
+        try:
+            # Delete existing tag if present
+            subprocess.run(
+                ["git", "tag", "-d", tag_name],
+                capture_output=True, cwd=self.project_path
+            )
+            # Create new tag
+            result = subprocess.run(
+                ["git", "tag", tag_name],
+                capture_output=True, text=True, cwd=self.project_path
+            )
+            if result.returncode == 0:
+                self.log(f"Created checkpoint: {tag_name}")
+                return tag_name
+        except Exception as e:
+            self.log(f"Failed to create checkpoint: {e}", "WARN")
+        return ""
+
+    def rollback_to_checkpoint(self, task_id: int) -> bool:
+        """Rollback to a previous checkpoint."""
+        # Find the most recent valid checkpoint
+        for check_id in range(task_id - 1, 0, -1):
+            tag_name = f"checkpoint-task-{check_id}"
+            result = subprocess.run(
+                ["git", "rev-parse", tag_name],
+                capture_output=True, cwd=self.project_path
+            )
+            if result.returncode == 0:
+                self.log(f"Rolling back to {tag_name}...")
+                subprocess.run(
+                    ["git", "reset", "--hard", tag_name],
+                    capture_output=True, cwd=self.project_path
+                )
+                self.log(f"Rolled back to checkpoint: {tag_name}")
+                return True
+
+        self.log("No checkpoint found to rollback to", "WARN")
+        return False
+
+    def get_retry_prompt(self, task: 'Task', attempt: int, error: str) -> str:
+        """Generate a smarter retry prompt based on previous failure."""
+        retry_hints = [
+            "The previous attempt failed. Please try a DIFFERENT approach.",
+            "Previous approach didn't work. Think about what went wrong and try something simpler.",
+            "Multiple attempts failed. Strip down to the absolute minimum implementation.",
+        ]
+        hint = retry_hints[min(attempt - 1, len(retry_hints) - 1)]
+
+        # Truncate error if too long
+        if len(error) > 2000:
+            error = error[:2000] + "\n...(truncated)"
+
+        return f"""## Retry Attempt {attempt + 1}
+
+{hint}
+
+## Original Task
+{task.title}
+
+{task.description}
+
+## Previous Error
+{error}
+
+## Instructions
+1. Analyze what went wrong in the previous attempt
+2. Consider a simpler or different approach
+3. Make minimal changes that will work
+4. Do NOT repeat the same mistake
+
+Implement a working solution."""
 
     def run_aider_fix(self, error_output: str, fix_type: str) -> bool:
         """Ask Aider to fix test/lint failures."""
@@ -1003,6 +1101,7 @@ Fix only what is broken. Keep changes minimal."""
 
         # Process tasks
         self.log(f"Processing {len(self.state.tasks)} tasks...")
+        self.log(f"Max consecutive failures allowed: {self.max_failures}")
 
         for i in range(self.state.current_task_index, len(self.state.tasks)):
             self.state.current_task_index = i
@@ -1012,17 +1111,52 @@ Fix only what is broken. Keep changes minimal."""
                 self.log(f"Skipping already completed task {task.id}")
                 continue
 
+            # Check consecutive failures
+            if self.consecutive_failures >= self.max_failures:
+                self.log(f"Stopping: {self.consecutive_failures} consecutive failures reached limit", "ERROR")
+                self.state.warnings.append(f"Stopped early: {self.consecutive_failures} consecutive failures")
+                break
+
             # Save state before each task
             self.save_state()
+
+            # Get commit before task for potential rollback
+            commit_before_task = self.get_current_commit()
 
             success = self.run_aider_task(task)
 
             if success:
+                # Verify build still works
+                build_ok, build_output = self.run_build()
+                if not build_ok:
+                    self.log("Build broken after task, attempting rollback...", "ERROR")
+                    task.error = f"Build failed: {build_output[:500]}"
+                    task.status = "failed"
+                    success = False
+
+                    # Rollback to before this task
+                    subprocess.run(
+                        ["git", "reset", "--hard", commit_before_task],
+                        capture_output=True, cwd=self.project_path
+                    )
+                    self.log(f"Rolled back to {commit_before_task[:8]}")
+
+            if success:
                 self.state.completed_count += 1
                 self.state.total_commits += len(task.commits)
+                self.consecutive_failures = 0  # Reset on success
+
+                # Create checkpoint
+                self.create_checkpoint(task.id)
             else:
                 self.state.failed_count += 1
-                self.log(f"Task {task.id} failed, continuing to next task...")
+                self.consecutive_failures += 1
+                self.log(f"Task {task.id} failed ({self.consecutive_failures}/{self.max_failures} consecutive)")
+
+                # Try rollback to last checkpoint if multiple failures
+                if self.consecutive_failures >= 2:
+                    self.log("Multiple failures, rolling back to last checkpoint...")
+                    self.rollback_to_checkpoint(task.id)
 
             # Save state after each task
             self.save_state()
@@ -1152,6 +1286,12 @@ Examples:
         action="store_true",
         help=f"Hybrid mode: use {SMART_MODEL} for complex tasks, local model for simple tasks (saves money)"
     )
+    parser.add_argument(
+        "--max-failures",
+        type=int,
+        default=3,
+        help="Stop after N consecutive task failures (default: 3)"
+    )
 
     args = parser.parse_args()
 
@@ -1168,6 +1308,7 @@ Examples:
         lint_cmd=args.lint_cmd,
         fix_retries=args.fix_retries,
         hybrid_mode=args.hybrid,
+        max_failures=args.max_failures,
     )
 
     # Handle signals for graceful shutdown

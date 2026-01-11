@@ -8,6 +8,7 @@ Usage:
     smart-test.py detect /path/to/project    # Detect project type
     smart-test.py test /path/to/project      # Run tests
     smart-test.py lint /path/to/project      # Run linting
+    smart-test.py build /path/to/project     # Verify build/compile works
     smart-test.py security /path/to/project  # Security audit (vulnerabilities)
     smart-test.py format /path/to/project    # Check code formatting
     smart-test.py size /path/to/project      # Check bundle/build size
@@ -236,6 +237,42 @@ def get_size_command(project_path: Path, info: dict) -> tuple[str | None, int | 
     return None, None
 
 
+def get_build_command(project_path: Path, info: dict) -> str | None:
+    """Get the appropriate build/compile verification command."""
+    types = info["types"]
+
+    # Expo: use export for build verification
+    if "expo" in types:
+        return "npx expo export --platform web --output-dir /tmp/expo-build-check"
+
+    # Node.js with build script
+    if "nodejs" in types:
+        pkg_json = project_path / "package.json"
+        if pkg_json.exists():
+            try:
+                pkg = json.loads(pkg_json.read_text())
+                scripts = pkg.get("scripts", {})
+                # Try common build scripts
+                for script in ["build", "compile", "tsc"]:
+                    if script in scripts:
+                        return f"npm run {script}"
+                # TypeScript without build script
+                if "typescript" in types:
+                    return "npx tsc --noEmit"
+            except:
+                pass
+
+    if "python" in types:
+        # Python syntax check
+        return "python -m py_compile *.py 2>/dev/null || python -m compileall . -q"
+    if "rust" in types:
+        return "cargo build"
+    if "go" in types:
+        return "go build ./..."
+
+    return None
+
+
 def get_deadcode_command(project_path: Path, info: dict) -> str | None:
     """Get dead code detection command."""
     types = info["types"]
@@ -410,6 +447,31 @@ def cmd_browser(html_path: Path) -> bool:
 
     success, output = run_browser_test(html_path)
     print(output)
+    return success
+
+
+def cmd_build(project_path: Path) -> bool:
+    """Handle build verification command."""
+    info = detect_project(project_path)
+    build_cmd = get_build_command(project_path, info)
+
+    if not build_cmd:
+        print("No build command detected for this project type.")
+        print(f"Detected types: {info['types']}")
+        return True  # No build needed is OK
+
+    print(f"Project types: {info['types']}")
+    print(f"Running: {build_cmd}")
+    print("-" * 40)
+
+    success, output = run_command(build_cmd, project_path, timeout=300)
+    print(output)
+
+    if success:
+        print("\n✓ BUILD PASSED")
+    else:
+        print("\n✗ BUILD FAILED")
+
     return success
 
 
@@ -625,6 +687,7 @@ def main():
         "detect": cmd_detect,
         "test": cmd_test,
         "lint": cmd_lint,
+        "build": cmd_build,
         "security": cmd_security,
         "format": cmd_format,
         "size": cmd_size,
