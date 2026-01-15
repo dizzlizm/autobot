@@ -578,9 +578,12 @@ class LearningEngine:
 class SelfModifyRunner:
     """Main runner for self-modification."""
 
-    def __init__(self, verbose: bool = True, dry_run: bool = False):
+    def __init__(self, verbose: bool = True, dry_run: bool = False,
+                 hybrid: bool = False, prompt_loop: bool = False):
         self.verbose = verbose
         self.dry_run = dry_run
+        self.hybrid = hybrid  # Use Gemini for complex tasks
+        self.prompt_loop = prompt_loop  # Use prompt loop for better prompts
         self.analyzer = SelfAnalyzer(verbose=verbose)
         self.task_generator = TaskGenerator(self.analyzer)
         self.learning = LearningEngine()
@@ -632,6 +635,16 @@ class SelfModifyRunner:
             "--max-failures", "2",  # Be conservative with self-modification
         ]
 
+        # Add hybrid mode if enabled (uses Gemini for complex tasks)
+        if self.hybrid:
+            cmd.append("--hybrid")
+            self.log("  Using HYBRID mode (Gemini for complex tasks)")
+
+        # Add prompt loop if enabled
+        if self.prompt_loop:
+            cmd.append("--prompt-loop")
+            self.log("  Using PROMPT LOOP (Ollama crafts prompts for Gemini)")
+
         self.log(f"Executing: {' '.join(cmd)}")
 
         try:
@@ -670,8 +683,14 @@ Examples:
     # Generate improvement tasks file
     python3 self_modify.py --generate-tasks
 
-    # Run full self-improvement cycle
+    # Run full self-improvement cycle (local 3b model only)
     python3 self_modify.py --improve
+
+    # RECOMMENDED: Use hybrid mode (Gemini for code changes)
+    python3 self_modify.py --improve --hybrid
+
+    # EPIC: Hybrid + Prompt Loop (best quality)
+    python3 self_modify.py --improve --hybrid --prompt-loop
 
     # Dry run (show what would happen)
     python3 self_modify.py --improve --dry-run
@@ -711,12 +730,24 @@ Examples:
         action="store_true",
         help="Reduce output verbosity"
     )
+    parser.add_argument(
+        "--hybrid",
+        action="store_true",
+        help="Use hybrid mode: Gemini for complex tasks, Ollama for simple ones"
+    )
+    parser.add_argument(
+        "--prompt-loop",
+        action="store_true",
+        help="Use prompt loop: Ollama crafts epic prompts before sending to Gemini"
+    )
 
     args = parser.parse_args()
 
     runner = SelfModifyRunner(
         verbose=not args.quiet,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        hybrid=args.hybrid,
+        prompt_loop=args.prompt_loop
     )
 
     if args.history:

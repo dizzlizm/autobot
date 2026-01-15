@@ -1908,7 +1908,12 @@ Examples:
     # Handle self-modification modes (don't require --project/--tasks)
     if args.self_modify or args.self_analyze:
         from self_modify import SelfModifyRunner
-        self_runner = SelfModifyRunner(verbose=True, dry_run=args.dry_run)
+        self_runner = SelfModifyRunner(
+            verbose=True,
+            dry_run=args.dry_run,
+            hybrid=args.hybrid,
+            prompt_loop=args.prompt_loop
+        )
 
         if args.self_analyze:
             # Just analyze, don't modify
