@@ -11,6 +11,10 @@ Features:
   - Web search integration for best practices & documentation
   - Self-assessing loop (no artificial limits)
   - The result: Gemini receives the most comprehensive prompts possible
+- Self-Modification: Autobot can analyze and improve its own source code
+  - Automatic code analysis to identify bugs and improvements
+  - Task generation for self-improvement
+  - Learning from outcomes to get better over time
 
 Usage:
     overnight.py --project ~/projects/web-app --tasks tasks.md
@@ -18,6 +22,10 @@ Usage:
 
     # Epic mode: Prompt loop + Hybrid
     overnight.py --project ~/projects/game --tasks tasks.md --hybrid --prompt-loop
+
+    # Self-modification: Autobot improves itself
+    overnight.py --self-modify
+    overnight.py --self-analyze  # Just analyze, don't modify
 """
 
 import argparse
@@ -1800,18 +1808,25 @@ Examples:
     # Custom prompt loop model (use larger model for better prompts)
     overnight.py --project ~/projects/app --tasks tasks.md \\
         --hybrid --prompt-loop --prompt-loop-model "ollama/qwen2.5-coder:14b"
+
+    # SELF-MODIFICATION: Analyze Autobot's own code
+    overnight.py --self-analyze --project . --tasks dummy.md
+
+    # SELF-MODIFICATION: Full self-improvement cycle
+    overnight.py --self-modify --project . --tasks dummy.md
+
+    # SELF-MODIFICATION: Dry run (see what would be done)
+    overnight.py --self-modify --dry-run --project . --tasks dummy.md
         """
     )
 
     parser.add_argument(
         "--project", "-p",
-        required=True,
-        help="Path to the project directory"
+        help="Path to the project directory (optional for --self-modify)"
     )
     parser.add_argument(
         "--tasks", "-t",
-        required=True,
-        help="Path to the tasks markdown file"
+        help="Path to the tasks markdown file (optional for --self-modify)"
     )
     parser.add_argument(
         "--branch", "-b",
@@ -1877,8 +1892,41 @@ Examples:
         default=PROMPT_LOOP_MODEL,
         help=f"Model for prompt loop (default: {PROMPT_LOOP_MODEL})"
     )
+    parser.add_argument(
+        "--self-modify",
+        action="store_true",
+        help="Self-modification mode: analyze and improve Autobot's own code"
+    )
+    parser.add_argument(
+        "--self-analyze",
+        action="store_true",
+        help="Only analyze Autobot's code without making changes"
+    )
 
     args = parser.parse_args()
+
+    # Handle self-modification modes (don't require --project/--tasks)
+    if args.self_modify or args.self_analyze:
+        from self_modify import SelfModifyRunner
+        self_runner = SelfModifyRunner(verbose=True, dry_run=args.dry_run)
+
+        if args.self_analyze:
+            # Just analyze, don't modify
+            results = self_runner.analyze()
+            print(f"\nAnalysis found {results.get('total_issues', 0)} issues")
+            issues = results.get("issues", [])[:10]
+            if issues:
+                print("\nTop Issues:")
+                for i, issue in enumerate(issues, 1):
+                    print(f"  {i}. [{issue.get('severity', '?').upper()}] {issue.get('description', 'Unknown')[:60]}")
+            sys.exit(0)
+        else:
+            # Full self-modification cycle
+            sys.exit(self_runner.run_improvement())
+
+    # Require --project and --tasks for normal mode
+    if not args.project or not args.tasks:
+        parser.error("--project and --tasks are required (unless using --self-modify)")
 
     runner = OvernightRunner(
         project_path=args.project,
