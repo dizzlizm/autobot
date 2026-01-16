@@ -1,249 +1,248 @@
-# Autobot - Overnight Coding Automation
+# Autobot - Self-Improving AI Agent
 
-Automated overnight coding using [Aider](https://aider.chat). Queue up tasks, go to sleep, wake up to commits and a report.
+Autobot is an AI system that analyzes and improves **its own source code**. It uses local LLMs (via Ollama) to examine its codebase, identify improvements, generate tasks, execute changes, and learn from outcomes.
 
-## What It Does
+## Core Concept
 
-`overnight.py` runs Aider in a loop over your task list:
+Autobot focuses exclusively on self-improvement:
 
-1. Parses tasks from a markdown file
-2. Runs each task through Aider
-3. Auto-commits changes
-4. Generates a morning report
+1. **Self-Analysis**: Examines its own Python source files to identify bugs, performance issues, and improvement opportunities
+2. **Task Generation**: Converts analysis results into actionable improvement tasks
+3. **Task Execution**: Uses Aider + Ollama to implement the improvements
+4. **Learning**: Tracks outcomes and adjusts strategies over time
 
-## Usage
-
-```bash
-# Basic usage
-./overnight.py --project ~/projects/my-app --tasks tasks.md
-
-# With validation (runs tests/lint after each task)
-./overnight.py --project ~/projects/my-app --tasks tasks.md \
-    --test-cmd "npm test" --lint-cmd "npm run lint"
-
-# Hybrid mode: Gemini for complex tasks, local Ollama for simple ones
-./overnight.py --project ~/projects/my-app --tasks tasks.md --hybrid
-
-# Epic mode: Local Ollama crafts comprehensive prompts, then Gemini executes
-./overnight.py --project ~/projects/my-app --tasks tasks.md --hybrid --prompt-loop
-
-# Resume an interrupted run
-./overnight.py --project ~/projects/my-app --tasks tasks.md --resume
-
-# Dry run (see what would happen)
-./overnight.py --project ~/projects/my-app --tasks tasks.md --dry-run
-```
-
-## Options
-
-| Flag | Description |
-|------|-------------|
-| `--project`, `-p` | Path to project directory (required) |
-| `--tasks`, `-t` | Path to tasks markdown file (required) |
-| `--branch`, `-b` | Git branch for overnight work (default: `overnight-YYYYMMDD`) |
-| `--model`, `-m` | Aider model (default: `ollama/qwen2.5-coder:3b`) |
-| `--timeout` | Timeout per task in seconds (default: 1800) |
-| `--test-cmd` | Command to run tests after each task |
-| `--lint-cmd` | Command to run linter after each task |
-| `--fix-retries` | Times to retry fixing test/lint failures (default: 2) |
-| `--hybrid` | Use Gemini for complex tasks, local model for simple ones |
-| `--prompt-loop` | Use Ollama to craft better prompts before sending to Gemini |
-| `--max-failures` | Stop after N consecutive failures (default: 3) |
-| `--resume` | Resume from a previous interrupted run |
-| `--dry-run` | Show what would happen without making changes |
-| `--report`, `-r` | Custom path for output report |
-
-## Task File Format
-
-Create a markdown file with `##` headings for each task:
-
-```markdown
-## Set up project structure
-
-Create a React app with:
-- src/ directory with components/
-- Basic App component
-- package.json with scripts
-
-## Add user authentication
-
-Implement login/logout with:
-- Login form component
-- Auth context for state
-- Protected route wrapper
-
-## Fix the date picker bug
-
-The date picker in src/components/DatePicker.tsx
-doesn't handle timezone conversion correctly.
-```
-
-Tasks are processed in order. Be specific about what you want.
-
-## Modes
-
-### Default Mode
-Uses a local Ollama model (`ollama/qwen2.5-coder:3b`) for all tasks. Free, runs offline.
-
-### Hybrid Mode (`--hybrid`)
-Automatically selects the right model per task:
-- **Gemini** (`gemini/gemini-3-pro-preview`): First 3 tasks, setup, architecture, complex features
-- **Local Ollama**: Polish, tweaks, simple changes
+## Quick Start
 
 ```bash
-./overnight.py --project ~/myapp --tasks tasks.md --hybrid
+# Install Ollama and pull a model
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5-coder:3b
+
+# Install Aider
+pip install aider-chat
+
+# Run self-analysis
+python3 autobot.py analyze
+
+# Run self-improvement (analyze -> generate tasks -> execute)
+python3 autobot.py improve
+
+# View learning history
+python3 autobot.py history
 ```
 
-### Prompt Loop Mode (`--prompt-loop`)
-Uses local Ollama to iteratively craft comprehensive prompts before sending to any model:
+## Commands
 
-1. Analyzes the task requirements
-2. Searches the web for best practices
-3. Enhances the prompt through multiple iterations
-4. Self-assesses quality (continues until score >= 8/10)
-5. Sends the refined prompt to the target model
-
-Works with any mode:
-```bash
-# With hybrid (Gemini + Ollama)
-./overnight.py --project ~/myapp --tasks tasks.md --hybrid --prompt-loop
-
-# With just local Ollama (all tasks get enhanced prompts)
-./overnight.py --project ~/myapp --tasks tasks.md --prompt-loop
-```
-
-## Validation
-
-Validation runs automatically after each task using smart-test (auto-detects your project type). You can also specify explicit commands.
-
-What happens:
-1. Runs lint check after each task
-2. Runs tests after each task
-3. If they fail, asks Aider to fix the issues
-4. Retries up to `--fix-retries` times (default: 2)
-5. Continues to next task even if validation fails (with warnings)
+### Main CLI (`autobot.py`)
 
 ```bash
-# Auto-detect (uses smart-test) - just works
-./overnight.py --project ~/myapp --tasks tasks.md
+# Analyze autobot's own code for improvements
+python3 autobot.py analyze
+python3 autobot.py analyze --plan    # Generate improvement plan
 
-# Or specify explicit commands
-./overnight.py --project ~/myapp --tasks tasks.md \
-    --test-cmd "npm test" --lint-cmd "npm run lint"
+# Run full self-improvement cycle
+python3 autobot.py improve
+python3 autobot.py improve --dry-run     # Preview without changes
+python3 autobot.py improve --max-tasks 3 # Limit tasks
+
+# Quick self-improvement (simplified flow)
+python3 autobot.py quick
+
+# View learning history and insights
+python3 autobot.py history
+
+# Check autobot status
+python3 autobot.py status
+
+# Run a specific improvement task
+python3 autobot.py run-task "Add error handling to analyzer"
 ```
 
-## Reports
+### Direct Scripts
 
-After each run, a report is saved to `reports/overnight_YYYYMMDD.md`:
+```bash
+# Full self-modification engine
+python3 self_modify.py --analyze       # Analyze codebase
+python3 self_modify.py --generate-tasks # Generate task file
+python3 self_modify.py --improve       # Full cycle
+python3 self_modify.py --history       # Learning history
 
-```markdown
-# Overnight Report - 2025-01-11
+# Quick self-improvement
+python3 self_improve.py                # Run quick improvement
+python3 self_improve.py --dry-run      # Preview only
 
-## Summary
-- Duration: 2:45:30
-- Tasks: 4/5 completed
-- Commits: 12
-- Branch: `overnight-20250111`
+# Task runner
+python3 runner.py tasks.md             # Run tasks from file
+python3 runner.py --task "Fix bug X"   # Run single task
+```
 
-## Usage & Cost
-- Tokens sent: 45,230
-- Tokens received: 12,100
-- Total cost: $0.1234
+## Architecture
 
-## Results
-- Task 1: Set up project structure (15m, 3 commits, $0.02)
-- Task 2: Add user authentication (45m, 5 commits, $0.05)
-- Task 3: Fix date picker bug (20m, 2 commits, $0.01)
-- Task 4: Add dashboard (1h, 2 commits, $0.04)
-- Task 5: Email integration - Aider exited with code 1
+```
+autobot/
+├── autobot.py       # Main CLI entry point
+├── self_modify.py   # Self-analysis and task generation engine
+├── self_improve.py  # Quick self-improvement flow
+├── runner.py        # Task execution engine
+├── setup.sh         # Installation script
+├── logs/            # Execution logs
+└── reports/         # Improvement reports
+```
+
+### Components
+
+| Module | Purpose |
+|--------|---------|
+| `autobot.py` | Main CLI, routes commands to appropriate handlers |
+| `self_modify.py` | **SelfAnalyzer**: Examines Python files, uses Ollama to identify issues |
+| | **TaskGenerator**: Converts issues into improvement tasks |
+| | **LearningEngine**: Tracks outcomes, calculates success rates |
+| | **SelfModifyRunner**: Orchestrates the full cycle |
+| `runner.py` | **TaskRunner**: Executes tasks via Aider, manages git branches |
+| `self_improve.py` | Simplified flow: read code → ask model → generate tasks → execute |
+
+## Self-Analysis Process
+
+When you run `autobot.py analyze`, it:
+
+1. **Discovers files**: Finds all Python files in autobot's directory
+2. **Calculates metrics**: Lines, functions, classes, TODOs per file
+3. **Analyzes with Ollama**: Asks the model to identify:
+   - Potential bugs
+   - Performance issues
+   - Code that needs refactoring
+   - Missing error handling
+   - Feature opportunities
+4. **Prioritizes**: Sorts issues by severity (high → medium → low)
+5. **Reports**: Shows top issues and optionally generates an improvement plan
+
+## Learning Engine
+
+Autobot tracks the outcomes of its self-improvement attempts:
+
+```bash
+python3 autobot.py history
+```
+
+Shows:
+- Overall success rate
+- Success rate by category (bug_fix, performance, refactor, etc.)
+- Average execution time
+- Total commits made
+- Common failure patterns
+- Suggested adjustments
+
+The learning engine:
+- Skips categories with very low success rates (< 20% after 3 attempts)
+- Suggests using different models if overall success < 50%
+- Recommends breaking down long-running tasks
+
+## Requirements
+
+- **Python 3.10+**
+- **Ollama**: Local LLM runtime ([install](https://ollama.com))
+- **Aider**: AI coding assistant ([install](https://aider.chat))
+- **Git**: For version control
+
+### Recommended Models
+
+```bash
+# Good balance of quality and speed (default)
+ollama pull qwen2.5-coder:3b
+
+# Higher quality, more RAM
+ollama pull qwen2.5-coder:7b
+
+# Even higher quality
+ollama pull qwen2.5-coder:14b
 ```
 
 ## Safety Features
 
-- **Checkpoints**: Creates git tags after each successful task
-- **Rollback**: Rolls back to last checkpoint after multiple failures
-- **State recovery**: Saves progress to `overnight_state.json` for resume
-- **RAM monitoring**: Pauses if RAM usage exceeds 75%
-- **Timeouts**: Kills tasks that run too long (default 30 min)
-- **Max failures**: Stops after N consecutive failures (default 3)
+- **Git branches**: All changes are made on a separate branch (e.g., `autobot-improve-20250116-1430`)
+- **Checkpoints**: Tags created after each successful task
+- **Rollback**: Automatic rollback after multiple failures
+- **Dry run**: Preview what would happen without making changes
+- **Conservative limits**: Stops after 2 consecutive failures by default
 
 ## Configuration
 
-### API Keys
-
-For Gemini (hybrid/cloud mode):
-```bash
-export GEMINI_API_KEY="your-key"
-# Or create .env file in this directory
-```
-
-For Ollama (default/local mode):
-```bash
-# Install Ollama: https://ollama.ai
-ollama pull qwen2.5-coder:3b
-```
-
-### Project Context
-
-Create `CONVENTIONS.md` in your project to give Aider context:
-
-```markdown
-# My App
-
-## Stack
-- React 18 + TypeScript
-- Tailwind CSS
-- Vite
-
-## Commands
-- `npm run dev` - Start dev server
-- `npm test` - Run tests
-
-## Rules
-- Use functional components
-- All functions need TypeScript types
-- No inline styles
-```
-
-## Directory Structure
-
-```
-autobot/
-├── overnight.py      # Main script
-├── aider             # Aider wrapper (activates venv)
-├── logs/             # Run logs
-├── reports/          # Morning reports
-├── templates/        # Task file templates
-│   ├── tasks.md
-│   ├── CONVENTIONS.md
-│   └── .aider.conf.yml
-├── tools/
-│   └── smart-test/   # Auto-detect test/lint commands
-└── systemd/          # For scheduled runs
-```
-
-## Scheduled Runs
-
-Use the systemd units to run overnight automatically:
+### Model Selection
 
 ```bash
-# Install
-./systemd/install-systemd.sh
+# Use a different model
+python3 autobot.py improve --model ollama/qwen2.5-coder:7b
 
-# Configure your project in the service file
-# Enable timer (runs at 11 PM)
-systemctl --user enable overnight-coder.timer
-systemctl --user start overnight-coder.timer
+# Or set in runner.py
+DEFAULT_MODEL = "ollama/qwen2.5-coder:7b"
 ```
 
-## Troubleshooting
+### Analysis Model
 
-**Aider not found**: Make sure the `aider` wrapper script exists and your venv is set up.
+Edit `self_modify.py`:
+```python
+ANALYSIS_MODEL = "ollama/qwen2.5-coder:7b"  # Default: 3b
+```
 
-**Task times out**: Increase with `--timeout 3600` (1 hour).
+## Example Session
 
-**RAM pausing too often**: Edit `MAX_RAM_PERCENT` in overnight.py (default 75%).
+```
+$ python3 autobot.py analyze --plan
 
-**Bad edits**: Make your task descriptions more specific, add CONVENTIONS.md.
+[13:45:23] ==================================================
+[13:45:23] AUTOBOT SELF-ANALYSIS
+[13:45:23] ==================================================
+[13:45:23] Discovering source files...
+[13:45:23] Found 4 source files
+[13:45:24] Analyzing: autobot.py
+[13:45:36] Analyzing: self_modify.py
+[13:45:48] Analyzing: runner.py
+[13:45:58] Analyzing: self_improve.py
 
-**API errors**: Check your GEMINI_API_KEY. For local-only, use the default Ollama model.
+[13:46:05] Files analyzed: 4
+[13:46:05] Issues found: 7
+
+Top Issues:
+  1. [HIGH] Missing error handling in subprocess calls
+     -> runner.py
+  2. [MEDIUM] Potential race condition in task execution
+     -> runner.py
+  3. [MEDIUM] Unused import 'signal' could be removed
+     -> autobot.py
+  ...
+
+$ python3 autobot.py improve --dry-run
+
+[13:47:00] ==================================================
+[13:47:00] AUTOBOT SELF-IMPROVEMENT
+[13:47:00] ==================================================
+
+Step 1: Self-Analysis
+...
+
+Step 2: Generate Improvement Tasks
+[13:47:15] Generated 5 improvement tasks
+
+[DRY RUN] Would execute self-improvement tasks
+Tasks file: /home/user/autobot/self_improvement_tasks.md
+```
+
+## Philosophy
+
+Autobot is designed around these principles:
+
+1. **Self-contained**: Uses local Ollama models, no external API dependencies
+2. **Focused**: Only improves itself, not general-purpose
+3. **Safe**: All changes on branches, with rollback capability
+4. **Learning**: Tracks outcomes to improve over time
+5. **Simple**: Clear architecture, easy to understand and modify
+
+## Contributing
+
+Autobot can improve itself, but human contributions are welcome too:
+
+1. Fork the repository
+2. Make your changes
+3. Submit a pull request
+
+Or just run `python3 autobot.py improve` and let it try to improve itself!

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Aider + Ollama Overnight Automation Setup Script
-# Installs everything in the directory where this script lives
+# Autobot - Self-Improving AI Agent Setup Script
+# Installs Ollama, Aider, and dependencies for autobot
 
 # Ensure we're running in bash, not sh
 if [ -z "$BASH_VERSION" ]; then
@@ -13,8 +13,8 @@ set -e
 
 # Use the directory where this script is located as the base
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OVERNIGHT_DIR="$SCRIPT_DIR"
-VENV_DIR="$OVERNIGHT_DIR/venv"
+AUTOBOT_DIR="$SCRIPT_DIR"
+VENV_DIR="$AUTOBOT_DIR/venv"
 CONFIG_DIR="$HOME/.config/aider"
 
 GREEN='\033[0;32m'
@@ -49,14 +49,12 @@ install_system_deps() {
 }
 
 #------------------------------------------------------------------------------
-# STEP 2: Create Directory Structure (all inside script directory)
+# STEP 2: Create Directory Structure
 #------------------------------------------------------------------------------
 create_directories() {
-    echo_status "Creating directory structure in $OVERNIGHT_DIR ..."
-    mkdir -p "$OVERNIGHT_DIR/templates"
-    mkdir -p "$OVERNIGHT_DIR/logs"
-    mkdir -p "$OVERNIGHT_DIR/reports"
-    mkdir -p "$OVERNIGHT_DIR/projects"
+    echo_status "Creating directory structure in $AUTOBOT_DIR ..."
+    mkdir -p "$AUTOBOT_DIR/logs"
+    mkdir -p "$AUTOBOT_DIR/reports"
     mkdir -p "$CONFIG_DIR"
     echo_status "Directories created"
 }
@@ -79,7 +77,7 @@ setup_venv_and_aider() {
     echo_status "Upgrading pip..."
     pip install --upgrade pip
 
-    echo_status "Installing Aider (this may take a few minutes)..."
+    echo_status "Installing Aider and dependencies..."
     pip install aider-chat psutil
 
     if command -v aider &> /dev/null; then
@@ -99,19 +97,21 @@ setup_venv_and_aider() {
 create_wrapper_scripts() {
     echo_status "Creating wrapper scripts..."
 
-    cat > "$OVERNIGHT_DIR/aider" << EOF
+    # Aider wrapper
+    cat > "$AUTOBOT_DIR/aider" << EOF
 #!/bin/bash
 . "$VENV_DIR/bin/activate"
 exec aider "\$@"
 EOF
-    chmod +x "$OVERNIGHT_DIR/aider"
+    chmod +x "$AUTOBOT_DIR/aider"
 
-    cat > "$OVERNIGHT_DIR/run-overnight" << EOF
+    # Autobot wrapper
+    cat > "$AUTOBOT_DIR/run-autobot" << EOF
 #!/bin/bash
 . "$VENV_DIR/bin/activate"
-exec python3 "$OVERNIGHT_DIR/overnight.py" "\$@"
+exec python3 "$AUTOBOT_DIR/autobot.py" "\$@"
 EOF
-    chmod +x "$OVERNIGHT_DIR/run-overnight"
+    chmod +x "$AUTOBOT_DIR/run-autobot"
 
     echo_status "Created wrapper scripts"
 }
@@ -137,7 +137,7 @@ configure_ollama() {
         fi
     fi
 
-    # Pull the default model (qwen2.5-coder:3b)
+    # Pull the default model
     echo_status "Pulling qwen2.5-coder:3b model (this may take a while)..."
     if ollama pull qwen2.5-coder:3b; then
         echo_status "Model qwen2.5-coder:3b ready"
@@ -172,13 +172,12 @@ setup_shell() {
     echo_status "Setting up shell environment..."
 
     SHELL_BLOCK="
-# Aider Overnight Automation
-export PATH=\"$OVERNIGHT_DIR:\$PATH\"
-alias overnight=\"$OVERNIGHT_DIR/run-overnight\"
-alias aider-ollama=\"$OVERNIGHT_DIR/aider --model ollama/qwen2.5-coder:7b --yes\"
+# Autobot - Self-Improving AI Agent
+export PATH=\"$AUTOBOT_DIR:\$PATH\"
+alias autobot=\"$AUTOBOT_DIR/run-autobot\"
 "
 
-    if ! grep -q "Aider Overnight" ~/.bashrc 2>/dev/null; then
+    if ! grep -q "Autobot" ~/.bashrc 2>/dev/null; then
         echo "$SHELL_BLOCK" >> ~/.bashrc
         echo_status "Added to ~/.bashrc"
     else
@@ -213,26 +212,28 @@ verify_installation() {
 print_summary() {
     echo ""
     echo "=============================================="
-    echo "  Setup Complete!"
+    echo "  Autobot Setup Complete!"
     echo "=============================================="
     echo ""
-    echo "Everything installed in: $OVERNIGHT_DIR"
+    echo "Everything installed in: $AUTOBOT_DIR"
     echo ""
     echo "Run this to load settings:"
     echo "  source ~/.bashrc"
     echo ""
-    echo "Quick test:"
-    echo "  cd $OVERNIGHT_DIR/projects"
-    echo "  mkdir test && cd test && git init"
-    echo "  $OVERNIGHT_DIR/aider --model ollama/qwen2.5-coder:7b"
+    echo "Quick start:"
+    echo "  # Analyze autobot's own code"
+    echo "  python3 $AUTOBOT_DIR/autobot.py analyze"
     echo ""
-    echo "Overnight run:"
-    echo "  $OVERNIGHT_DIR/run-overnight --project /path/to/project --tasks tasks.md"
+    echo "  # Run self-improvement"
+    echo "  python3 $AUTOBOT_DIR/autobot.py improve"
     echo ""
-    echo "Alternative models (change with --model):"
-    echo "  ollama/codellama:7b        # Meta's coding model"
-    echo "  ollama/deepseek-coder:6.7b # DeepSeek coding model"
-    echo "  ollama/mistral:7b          # General purpose"
+    echo "  # View learning history"
+    echo "  python3 $AUTOBOT_DIR/autobot.py history"
+    echo ""
+    echo "Alternative models (edit DEFAULT_MODEL in runner.py):"
+    echo "  ollama/qwen2.5-coder:3b   # Default - good balance"
+    echo "  ollama/qwen2.5-coder:7b   # Higher quality"
+    echo "  ollama/qwen2.5-coder:14b  # Best quality"
     echo ""
 }
 
@@ -241,8 +242,8 @@ print_summary() {
 #------------------------------------------------------------------------------
 main() {
     echo "=============================================="
-    echo "  Aider + Ollama Setup"
-    echo "  Installing to: $OVERNIGHT_DIR"
+    echo "  Autobot - Self-Improving AI Agent Setup"
+    echo "  Installing to: $AUTOBOT_DIR"
     echo "=============================================="
     echo ""
 

@@ -25,13 +25,20 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs and reports
 *.log
 logs/
+reports/
 
 # Local config
 .env
 .env.local
 
-# State files (generated during runs)
-overnight_state.json
+# State and history files (generated during runs)
+runner_state.json
+self_modify_history.json
+
+# Generated task files
+self_improvement_tasks.md
+self_tasks.md
+quick_tasks.md
