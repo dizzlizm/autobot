@@ -89,9 +89,7 @@ def cmd_improve(args):
 
     runner = SelfModifyRunner(
         verbose=not args.quiet,
-        dry_run=args.dry_run,
-        hybrid=False,  # Pure local model for self-contained operation
-        prompt_loop=args.prompt_loop
+        dry_run=args.dry_run
     )
 
     return runner.run_improvement(max_tasks=args.max_tasks)
@@ -261,7 +259,6 @@ Examples:
     p_improve = subparsers.add_parser("improve", help="Run self-improvement cycle")
     p_improve.add_argument("--dry-run", action="store_true", help="Preview without changes")
     p_improve.add_argument("--max-tasks", type=int, default=5, help="Max tasks to run")
-    p_improve.add_argument("--prompt-loop", action="store_true", help="Use iterative prompt refinement")
     p_improve.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     p_improve.set_defaults(func=cmd_improve)
 
