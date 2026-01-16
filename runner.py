@@ -22,6 +22,7 @@ from typing import Optional
 # Configuration
 AUTOBOT_DIR = Path(__file__).parent.resolve()
 DEFAULT_MODEL = "ollama/qwen2.5-coder:3b"  # Good balance of quality and speed
+GEMINI_MODEL = "gemini/gemini-2.5-flash"   # Cloud model for higher quality output
 TASK_TIMEOUT = 1200  # 20 minutes per task
 STATE_FILE = "runner_state.json"
 LOG_DIR = AUTOBOT_DIR / "logs"
@@ -69,17 +70,44 @@ class TaskRunner:
         timeout: int = TASK_TIMEOUT,
         dry_run: bool = False,
         verbose: bool = True,
+        use_gemini: bool = False,
     ):
         self.project_path = Path(project_path or AUTOBOT_DIR).resolve()
-        self.model = model
         self.timeout = timeout
         self.dry_run = dry_run
         self.verbose = verbose
+        self.use_gemini = use_gemini
         self.state: Optional[RunnerState] = None
+
+        # Select model based on use_gemini flag
+        if use_gemini:
+            self.model = GEMINI_MODEL
+            self._setup_gemini_api()
+        else:
+            self.model = model
 
         # Ensure directories exist
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _setup_gemini_api(self):
+        """Load Gemini API key from environment or .env file."""
+        if os.environ.get("GEMINI_API_KEY"):
+            return  # Already set
+
+        # Try loading from .env file
+        env_file = AUTOBOT_DIR / ".env"
+        if env_file.exists():
+            with open(env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("GEMINI_API_KEY="):
+                        key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        os.environ["GEMINI_API_KEY"] = key
+                        self.log("Loaded GEMINI_API_KEY from .env")
+                        return
+
+        self.log("Warning: GEMINI_API_KEY not found. Set it or create .env file.", "WARN")
 
     def log(self, message: str, level: str = "INFO"):
         """Log a message."""

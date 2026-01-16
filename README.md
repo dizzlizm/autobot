@@ -40,10 +40,14 @@ python3 autobot.py history
 python3 autobot.py analyze
 python3 autobot.py analyze --plan    # Generate improvement plan
 
-# Run full self-improvement cycle
+# Run full self-improvement cycle (pure local with Ollama)
 python3 autobot.py improve
 python3 autobot.py improve --dry-run     # Preview without changes
 python3 autobot.py improve --max-tasks 3 # Limit tasks
+
+# Use Gemini for higher quality code execution
+# Local Ollama does analysis -> Gemini 2.5 Flash writes the code
+python3 autobot.py improve --gemini
 
 # Quick self-improvement (simplified flow)
 python3 autobot.py quick
@@ -170,12 +174,30 @@ ollama pull qwen2.5-coder:14b
 ### Model Selection
 
 ```bash
-# Use a different model
+# Use a different local model
 python3 autobot.py improve --model ollama/qwen2.5-coder:7b
 
 # Or set in runner.py
 DEFAULT_MODEL = "ollama/qwen2.5-coder:7b"
 ```
+
+### Gemini Mode (Higher Quality)
+
+Use `--gemini` to have Gemini 2.5 Flash write the code while local Ollama handles analysis:
+
+```bash
+# Set your API key
+export GEMINI_API_KEY="your-key-here"
+# Or create .env file in autobot directory:
+# GEMINI_API_KEY=your-key-here
+
+# Run with Gemini
+python3 autobot.py improve --gemini
+```
+
+This hybrid approach gives you:
+- **Local analysis**: Fast, free, private (Ollama)
+- **Better code**: Higher quality output (Gemini 2.5 Flash)
 
 ### Analysis Model
 

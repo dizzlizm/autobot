@@ -578,9 +578,10 @@ class LearningEngine:
 class SelfModifyRunner:
     """Main runner for self-modification."""
 
-    def __init__(self, verbose: bool = True, dry_run: bool = False):
+    def __init__(self, verbose: bool = True, dry_run: bool = False, use_gemini: bool = False):
         self.verbose = verbose
         self.dry_run = dry_run
+        self.use_gemini = use_gemini
         self.analyzer = SelfAnalyzer(verbose=verbose)
         self.task_generator = TaskGenerator(self.analyzer)
         self.learning = LearningEngine()
@@ -625,16 +626,21 @@ class SelfModifyRunner:
         branch = f"autobot-improve-{datetime.now().strftime('%Y%m%d-%H%M')}"
 
         # Use the new focused runner
-        from runner import TaskRunner
+        from runner import TaskRunner, GEMINI_MODEL, DEFAULT_MODEL
 
         runner = TaskRunner(
             project_path=str(SCRIPT_DIR),
             dry_run=self.dry_run,
-            verbose=True
+            verbose=True,
+            use_gemini=self.use_gemini
         )
 
         self.log(f"Running tasks from: {tasks_file}")
         self.log(f"Branch: {branch}")
+        if self.use_gemini:
+            self.log(f"Execution model: {GEMINI_MODEL} (Gemini for higher quality)")
+        else:
+            self.log(f"Execution model: {DEFAULT_MODEL} (local Ollama)")
 
         try:
             result = runner.run_tasks_from_file(tasks_file, branch)

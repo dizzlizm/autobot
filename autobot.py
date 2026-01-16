@@ -87,9 +87,15 @@ def cmd_improve(args):
     log("AUTOBOT SELF-IMPROVEMENT")
     log("=" * 50)
 
+    if args.gemini:
+        log("Mode: Local analysis -> Gemini execution")
+    else:
+        log("Mode: Pure local (Ollama)")
+
     runner = SelfModifyRunner(
         verbose=not args.quiet,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        use_gemini=args.gemini
     )
 
     return runner.run_improvement(max_tasks=args.max_tasks)
@@ -228,10 +234,13 @@ Examples:
     python3 autobot.py analyze
     python3 autobot.py analyze --plan
 
-    # Run self-improvement
+    # Run self-improvement (pure local with Ollama)
     python3 autobot.py improve
     python3 autobot.py improve --dry-run
     python3 autobot.py improve --max-tasks 3
+
+    # Use Gemini for higher quality code (local analysis -> Gemini execution)
+    python3 autobot.py improve --gemini
 
     # Quick improvement (simplified)
     python3 autobot.py quick
@@ -259,6 +268,8 @@ Examples:
     p_improve = subparsers.add_parser("improve", help="Run self-improvement cycle")
     p_improve.add_argument("--dry-run", action="store_true", help="Preview without changes")
     p_improve.add_argument("--max-tasks", type=int, default=5, help="Max tasks to run")
+    p_improve.add_argument("--gemini", "-g", action="store_true",
+                          help="Use Gemini 2.5 Flash for code execution (local model does analysis)")
     p_improve.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     p_improve.set_defaults(func=cmd_improve)
 
