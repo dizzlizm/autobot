@@ -319,43 +319,50 @@ class TaskGenerator:
         return severity_map.get(severity.lower(), 3)
 
     def generate_tasks_from_analysis(self) -> list[ImprovementTask]:
-        """Generate improvement tasks from analysis results."""
+        """Generate improvement tasks from analysis results.
+
+        Each task focuses on ONE file and ONE specific change.
+        """
         if not self.analyzer.analysis_results:
             self.analyzer.analyze_codebase()
 
-        self.log("Generating improvement tasks...")
+        self.log("Generating focused improvement tasks (one file, one change each)...")
 
         issues = self.analyzer.analysis_results.get("issues", [])
         tasks = []
 
-        for i, issue in enumerate(issues[:15], 1):  # Limit to top 15
+        for i, issue in enumerate(issues[:10], 1):  # Limit to top 10 focused tasks
+            target_file = issue.get('file', 'unknown')
+
             task = ImprovementTask(
                 id=i,
                 category=self.categorize_issue(issue),
-                title=f"Fix: {issue.get('description', 'Unknown issue')[:60]}",
-                description=f"""Issue found in {issue.get('file', 'unknown')}:
+                title=f"[{target_file}] {issue.get('description', 'Unknown issue')[:50]}",
+                description=f"""## Single File Change
 
-Type: {issue.get('type', 'unknown')}
-Severity: {issue.get('severity', 'unknown')}
-Location: {issue.get('line_hint', 'unknown')}
+**Target File:** {target_file}
+**Change Type:** {issue.get('type', 'unknown')}
+**Severity:** {issue.get('severity', 'unknown')}
 
-Description:
+## Issue
 {issue.get('description', 'No description')}
 
-Requirements:
-- Identify the exact location of the issue
-- Implement a minimal, focused fix
-- Ensure no regression in existing functionality
-- Follow existing code patterns""",
+## Constraints
+- ONLY modify {target_file}
+- Make ONE focused change
+- Do NOT refactor other code
+- Do NOT add comments or docstrings
+- Do NOT change formatting elsewhere
+- Keep the fix minimal and surgical""",
                 priority=self.priority_from_severity(issue.get("severity", "medium")),
-                estimated_complexity=issue.get("severity", "medium"),
-                target_files=[issue.get("file", "")],
+                estimated_complexity="low",  # Force low complexity for focused changes
+                target_files=[target_file],
                 created_at=datetime.now().isoformat(),
             )
             tasks.append(task)
 
         self.tasks = tasks
-        self.log(f"Generated {len(tasks)} improvement tasks")
+        self.log(f"Generated {len(tasks)} focused tasks")
         return tasks
 
     def generate_tasks_file(self, output_path: Optional[Path] = None) -> Path:

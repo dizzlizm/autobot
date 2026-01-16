@@ -168,35 +168,29 @@ class TaskRunner:
             self.log(f"Created branch: {branch_name}")
 
     def build_prompt(self, task: Task) -> str:
-        """Build a focused prompt for the task."""
-        return f"""## Self-Improvement Task
-
-{task.title}
-
-## Details
+        """Build a focused prompt for the task - one file, one change."""
+        return f"""## Task: {task.title}
 
 {task.description}
 
+## CRITICAL CONSTRAINTS
+
+1. **ONE FILE ONLY** - Only modify the target file specified above
+2. **ONE CHANGE** - Make exactly one surgical fix
+3. **MINIMAL DIFF** - Smallest possible change to fix the issue
+4. **NO EXTRAS** - Do NOT add comments, docstrings, or type hints
+5. **NO REFACTORING** - Do NOT improve other code you see
+6. **PRESERVE STYLE** - Match existing formatting exactly
+
 ## Context
 
-You are improving Autobot's own source code. Autobot is a self-improving AI agent
-written in Python that uses Ollama for local LLM inference.
+Autobot source files:
+- autobot.py (CLI)
+- self_modify.py (analysis)
+- runner.py (execution)
+- self_improve.py (quick mode)
 
-Key files:
-- autobot.py: Main entry point and CLI
-- self_modify.py: Self-analysis and task generation
-- runner.py: Task execution engine
-- self_improve.py: Quick improvement flow
-
-## Requirements
-
-1. Make minimal, focused changes
-2. Follow existing code patterns
-3. Keep the same formatting style
-4. Do NOT add unnecessary comments
-5. Test that changes don't break functionality
-
-Now implement the improvement."""
+Implement the single focused change now."""
 
     def run_aider(self, message: str) -> tuple[bool, str, list[str]]:
         """Run Aider with a message and return (success, output, commits)."""
