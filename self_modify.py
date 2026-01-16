@@ -338,24 +338,20 @@ class TaskGenerator:
                 id=i,
                 category=self.categorize_issue(issue),
                 title=f"[{target_file}] {issue.get('description', 'Unknown issue')[:50]}",
-                description=f"""## Single File Change
+                description=f"""TARGET FILE: {target_file}
 
-**Target File:** {target_file}
-**Change Type:** {issue.get('type', 'unknown')}
-**Severity:** {issue.get('severity', 'unknown')}
+ISSUE: {issue.get('description', 'No description')}
 
-## Issue
-{issue.get('description', 'No description')}
+CHANGE TYPE: {issue.get('type', 'unknown')}
 
-## Constraints
+CONSTRAINTS:
 - ONLY modify {target_file}
 - Make ONE focused change
-- Do NOT refactor other code
-- Do NOT add comments or docstrings
-- Do NOT change formatting elsewhere
-- Keep the fix minimal and surgical""",
+- Minimal diff only
+- No extra comments or docstrings
+- Preserve existing style""",
                 priority=self.priority_from_severity(issue.get("severity", "medium")),
-                estimated_complexity="low",  # Force low complexity for focused changes
+                estimated_complexity="low",
                 target_files=[target_file],
                 created_at=datetime.now().isoformat(),
             )
@@ -366,41 +362,25 @@ class TaskGenerator:
         return tasks
 
     def generate_tasks_file(self, output_path: Optional[Path] = None) -> Path:
-        """Generate a tasks.md file for runner.py to consume."""
+        """Generate a tasks.md file for runner.py to consume.
+
+        Format: ## Task N: Title followed by description (no other ## headers).
+        """
         if not self.tasks:
             self.generate_tasks_from_analysis()
 
         output_path = output_path or SELF_TASKS_FILE
 
-        lines = [
-            "# Self-Improvement Tasks",
-            "",
-            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"Total Tasks: {len(self.tasks)}",
-            "",
-            "---",
-            "",
-        ]
+        lines = []
 
-        # Group by priority
-        for priority in range(1, 6):
-            priority_tasks = [t for t in self.tasks if t.priority == priority]
-            if priority_tasks:
-                priority_name = {1: "Critical", 2: "High", 3: "Medium", 4: "Low", 5: "Minor"}.get(priority, "Other")
-                lines.append(f"# Priority: {priority_name}")
-                lines.append("")
+        # Sort by priority (1=highest)
+        sorted_tasks = sorted(self.tasks, key=lambda t: t.priority)
 
-                for task in priority_tasks:
-                    lines.append(f"## Task {task.id}: {task.title}")
-                    lines.append("")
-                    lines.append(f"**Category**: {task.category}")
-                    lines.append(f"**Complexity**: {task.estimated_complexity}")
-                    lines.append(f"**Target Files**: {', '.join(task.target_files)}")
-                    lines.append("")
-                    lines.append(task.description)
-                    lines.append("")
-                    lines.append("---")
-                    lines.append("")
+        for task in sorted_tasks:
+            lines.append(f"## Task {task.id}: {task.title}")
+            lines.append("")
+            lines.append(task.description)
+            lines.append("")
 
         content = "\n".join(lines)
 

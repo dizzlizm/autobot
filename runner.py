@@ -196,8 +196,11 @@ Implement the single focused change now."""
         """Run Aider with a message and return (success, output, commits)."""
         commit_before = self.get_current_commit()
 
+        # Determine aider command - prefer wrapper, fall back to system
+        aider_cmd = AIDER_CMD if Path(AIDER_CMD).exists() else "aider"
+
         cmd = [
-            str(AIDER_CMD),
+            str(aider_cmd),
             "--model", self.model,
             "--yes",
             "--auto-commits",
@@ -206,6 +209,7 @@ Implement the single focused change now."""
         ]
 
         self.log(f"Running Aider with {self.model}...")
+        self.log(f"Command: {aider_cmd}")
 
         try:
             process = subprocess.Popen(
@@ -233,14 +237,23 @@ Implement the single focused change now."""
                     output_lines.append(line)
 
             output = "".join(output_lines)
-            success = process.returncode == 0
+            returncode = process.returncode
+
+            if returncode != 0 and not output_lines:
+                self.log(f"Aider exited with code {returncode} and no output", "ERROR")
+                return False, f"Aider failed (exit code {returncode})", []
 
             # Get new commits
             commits = self.get_commits_since(commit_before)
 
-            return success, output, commits
+            return returncode == 0 or len(commits) > 0, output, commits
 
+        except FileNotFoundError:
+            self.log(f"Aider not found at: {aider_cmd}", "ERROR")
+            self.log("Install with: pip install aider-chat", "ERROR")
+            return False, "Aider not found", []
         except Exception as e:
+            self.log(f"Aider error: {e}", "ERROR")
             return False, str(e), []
 
     def run_single_task(self, task_description: str) -> int:
@@ -352,12 +365,15 @@ Implement the single focused change now."""
         return self.run_tasks(tasks, branch)
 
     def _parse_tasks_file(self, tasks_file: Path) -> list[Task]:
-        """Parse tasks from markdown file."""
+        """Parse tasks from markdown file.
+
+        Only matches: ## Task N: Title
+        """
         content = tasks_file.read_text()
         tasks = []
 
-        # Match ## Task N: Title or ## Title patterns
-        pattern = r"##\s+(?:Task\s+\d+:\s+)?(.+?)(?=\n##|\Z)"
+        # Strictly match ## Task N: Title pattern only
+        pattern = r"## Task \d+: (.+?)(?=\n## Task \d+:|\Z)"
         matches = re.findall(pattern, content, re.DOTALL)
 
         for i, match in enumerate(matches, 1):
@@ -365,13 +381,9 @@ Implement the single focused change now."""
             title = lines[0].strip()
             description = lines[1].strip() if len(lines) > 1 else title
 
-            # Skip metadata sections
-            if title.lower() in ["summary", "notes", "metadata", "config"]:
-                continue
-
             tasks.append(Task(
                 id=i,
-                title=title,
+                title=title[:60],  # Truncate long titles
                 description=description
             ))
 
