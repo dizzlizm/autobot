@@ -83,7 +83,6 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_DIR = SCRIPT_DIR / "logs"
 REPORT_DIR = SCRIPT_DIR / "reports"
 AIDER_CMD = SCRIPT_DIR / "aider"  # Use the wrapper script that activates venv
-SMART_TEST = SCRIPT_DIR / "tools" / "smart-test" / "smart-test.py"  # Auto-detect testing
 
 # Smart prompting for smaller models (3B-7B)
 # Provides chain-of-thought structure and explicit guidance
@@ -1057,36 +1056,22 @@ coverage/
             return False, str(e)
 
     def run_tests(self) -> tuple[bool, str]:
-        """Run the test command - auto-detects if not specified."""
+        """Run the test command if specified."""
         if self.test_cmd:
             return self.run_command(self.test_cmd, "Tests")
-        # Auto-detect using smart-test
-        if SMART_TEST.exists():
-            cmd = f"python3 {SMART_TEST} test {self.project_path}"
-            return self.run_command(cmd, "Tests (auto-detected)")
-        return True, ""  # No test tool available
+        return True, ""  # No test command specified
 
     def run_lint(self) -> tuple[bool, str]:
-        """Run the lint command - auto-detects if not specified."""
+        """Run the lint command if specified."""
         if self.lint_cmd:
             return self.run_command(self.lint_cmd, "Lint")
-        # Auto-detect using smart-test
-        if SMART_TEST.exists():
-            cmd = f"python3 {SMART_TEST} lint {self.project_path}"
-            return self.run_command(cmd, "Lint (auto-detected)")
-        return True, ""  # No lint tool available
+        return True, ""  # No lint command specified
 
     def run_build(self) -> tuple[bool, str]:
-        """Run build verification - auto-detects build command."""
-        if SMART_TEST.exists():
-            cmd = f"python3 {SMART_TEST} build {self.project_path}"
-            return self.run_command(cmd, "Build verification")
-
-        # Fallback: check for common build commands
+        """Run build verification - checks for common build commands."""
         package_json = self.project_path / "package.json"
         if package_json.exists():
             try:
-                import json
                 with open(package_json) as f:
                     pkg = json.load(f)
                 if "build" in pkg.get("scripts", {}):
@@ -1220,17 +1205,13 @@ Fix only what is broken. Keep changes minimal."""
             return False
 
     def validate_task(self, task: Task) -> bool:
-        """Run tests and lint after a task, attempt fixes if needed.
-
-        Uses smart-test for auto-detection when no explicit commands provided.
-        """
-        # Check if we have any validation available
-        has_lint = self.lint_cmd or SMART_TEST.exists()
-        has_test = self.test_cmd or SMART_TEST.exists()
+        """Run tests and lint after a task, attempt fixes if needed."""
+        # Check if we have any validation commands
+        has_lint = bool(self.lint_cmd)
+        has_test = bool(self.test_cmd)
 
         if not has_lint and not has_test:
-            self.log("  No validation tools available (skipping)")
-            return True
+            return True  # No validation configured, skip silently
 
         for attempt in range(self.fix_retries + 1):
             all_passed = True
@@ -1447,20 +1428,16 @@ Fix only what is broken. Keep changes minimal."""
                 if returncode != 0:
                     self.state.warnings.append(f"Task {task.id}: Aider returned non-zero exit code")
 
-                # Run validation (tests/lint)
-                print()
-                self.log("-" * 40)
-                self.log("VALIDATION")
-                self.log("-" * 40)
-                # Show what validation will be used
-                if self.test_cmd:
-                    self.log(f"  Tests: {self.test_cmd}")
-                elif SMART_TEST.exists():
-                    self.log(f"  Tests: smart-test (auto-detect)")
-                if self.lint_cmd:
-                    self.log(f"  Lint: {self.lint_cmd}")
-                elif SMART_TEST.exists():
-                    self.log(f"  Lint: smart-test (auto-detect)")
+                # Run validation (tests/lint) if configured
+                if self.test_cmd or self.lint_cmd:
+                    print()
+                    self.log("-" * 40)
+                    self.log("VALIDATION")
+                    self.log("-" * 40)
+                    if self.test_cmd:
+                        self.log(f"  Tests: {self.test_cmd}")
+                    if self.lint_cmd:
+                        self.log(f"  Lint: {self.lint_cmd}")
 
                 if self.validate_task(task):
                     task.status = "completed"
