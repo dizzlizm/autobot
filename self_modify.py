@@ -359,7 +359,7 @@ Requirements:
         return tasks
 
     def generate_tasks_file(self, output_path: Optional[Path] = None) -> Path:
-        """Generate a tasks.md file for overnight.py to consume."""
+        """Generate a tasks.md file for runner.py to consume."""
         if not self.tasks:
             self.generate_tasks_from_analysis()
 
