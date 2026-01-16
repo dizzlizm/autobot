@@ -578,12 +578,9 @@ class LearningEngine:
 class SelfModifyRunner:
     """Main runner for self-modification."""
 
-    def __init__(self, verbose: bool = True, dry_run: bool = False,
-                 hybrid: bool = False, prompt_loop: bool = False):
+    def __init__(self, verbose: bool = True, dry_run: bool = False):
         self.verbose = verbose
         self.dry_run = dry_run
-        self.hybrid = hybrid  # Use Gemini for complex tasks
-        self.prompt_loop = prompt_loop  # Use prompt loop for better prompts
         self.analyzer = SelfAnalyzer(verbose=verbose)
         self.task_generator = TaskGenerator(self.analyzer)
         self.learning = LearningEngine()
@@ -617,51 +614,36 @@ class SelfModifyRunner:
         tasks_file = self.generate_tasks()
 
         if self.dry_run:
-            self.log("\n[DRY RUN] Would execute overnight.py with self-improvement tasks")
+            self.log("\n[DRY RUN] Would execute self-improvement tasks")
             self.log(f"Tasks file: {tasks_file}")
             return 0
 
-        # Step 3: Execute via overnight.py
+        # Step 3: Execute via runner.py
         self.log("\nStep 3: Execute Self-Improvement")
 
         # Create a safe branch for self-modification
-        branch = f"self-modify-{datetime.now().strftime('%Y%m%d-%H%M')}"
+        branch = f"autobot-improve-{datetime.now().strftime('%Y%m%d-%H%M')}"
 
-        cmd = [
-            "python3", str(SCRIPT_DIR / "overnight.py"),
-            "--project", str(SCRIPT_DIR),
-            "--tasks", str(tasks_file),
-            "--branch", branch,
-            "--max-failures", "2",  # Be conservative with self-modification
-        ]
+        # Use the new focused runner
+        from runner import TaskRunner
 
-        # Add hybrid mode if enabled (uses Gemini for complex tasks)
-        if self.hybrid:
-            cmd.append("--hybrid")
-            self.log("  Using HYBRID mode (Gemini for complex tasks)")
+        runner = TaskRunner(
+            project_path=str(SCRIPT_DIR),
+            dry_run=self.dry_run,
+            verbose=True
+        )
 
-        # Add prompt loop if enabled
-        if self.prompt_loop:
-            cmd.append("--prompt-loop")
-            self.log("  Using PROMPT LOOP (Ollama crafts prompts for Gemini)")
-
-        self.log(f"Executing: {' '.join(cmd)}")
+        self.log(f"Running tasks from: {tasks_file}")
+        self.log(f"Branch: {branch}")
 
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=SCRIPT_DIR,
-                timeout=3600,  # 1 hour max for self-improvement
-            )
+            result = runner.run_tasks_from_file(tasks_file, branch)
 
-            success = result.returncode == 0
+            success = result == 0
             self.log(f"Self-improvement {'completed successfully' if success else 'had failures'}")
 
-            return result.returncode
+            return result
 
-        except subprocess.TimeoutExpired:
-            self.log("Self-improvement timed out", "ERROR")
-            return 1
         except Exception as e:
             self.log(f"Self-improvement failed: {e}", "ERROR")
             return 1
@@ -677,26 +659,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Analyze codebase and show issues
+    # Analyze autobot's codebase and show issues
     python3 self_modify.py --analyze
 
     # Generate improvement tasks file
     python3 self_modify.py --generate-tasks
 
-    # Run full self-improvement cycle (local 3b model only)
+    # Run full self-improvement cycle
     python3 self_modify.py --improve
-
-    # RECOMMENDED: Use hybrid mode (Gemini for code changes)
-    python3 self_modify.py --improve --hybrid
-
-    # EPIC: Hybrid + Prompt Loop (best quality)
-    python3 self_modify.py --improve --hybrid --prompt-loop
 
     # Dry run (show what would happen)
     python3 self_modify.py --improve --dry-run
 
     # Show learning history
     python3 self_modify.py --history
+
+Note: Use 'python3 autobot.py' for the main CLI interface.
 """
     )
 
@@ -730,24 +708,12 @@ Examples:
         action="store_true",
         help="Reduce output verbosity"
     )
-    parser.add_argument(
-        "--hybrid",
-        action="store_true",
-        help="Use hybrid mode: Gemini for complex tasks, Ollama for simple ones"
-    )
-    parser.add_argument(
-        "--prompt-loop",
-        action="store_true",
-        help="Use prompt loop: Ollama crafts epic prompts before sending to Gemini"
-    )
 
     args = parser.parse_args()
 
     runner = SelfModifyRunner(
         verbose=not args.quiet,
-        dry_run=args.dry_run,
-        hybrid=args.hybrid,
-        prompt_loop=args.prompt_loop
+        dry_run=args.dry_run
     )
 
     if args.history:

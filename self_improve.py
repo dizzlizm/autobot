@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Let the small model try to improve itself.
-Just run it and see what happens.
+Quick self-improvement for Autobot.
+
+A simplified flow that:
+1. Reads autobot's source files
+2. Asks the local model for improvement suggestions
+3. Generates tasks from suggestions
+4. Executes the tasks
 
 Usage:
     python3 self_improve.py
     python3 self_improve.py --model ollama/qwen2.5-coder:7b
+    python3 self_improve.py --dry-run
 """
 
 import argparse
@@ -15,12 +21,16 @@ from datetime import datetime
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
+DEFAULT_MODEL = "qwen2.5-coder:3b"
+
 
 def log(msg):
+    """Simple logging."""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
-def ask_model(prompt, model="qwen2.5-coder:3b"):
-    """Ask the model a question."""
+
+def ask_model(prompt: str, model: str = DEFAULT_MODEL) -> str:
+    """Ask the local Ollama model a question."""
     try:
         result = subprocess.run(
             ["ollama", "run", model],
@@ -30,47 +40,61 @@ def ask_model(prompt, model="qwen2.5-coder:3b"):
             timeout=120
         )
         return result.stdout.strip()
-    except:
+    except Exception as e:
+        log(f"Model call failed: {e}")
         return ""
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Let the model improve itself")
-    parser.add_argument("--model", "-m", default="ollama/qwen2.5-coder:3b")
-    parser.add_argument("--dry-run", action="store_true", help="Just show the plan")
+    parser = argparse.ArgumentParser(
+        description="Quick self-improvement for Autobot",
+        epilog="Note: Use 'python3 autobot.py improve' for the full self-improvement cycle."
+    )
+    parser.add_argument("--model", "-m", default=f"ollama/{DEFAULT_MODEL}",
+                        help=f"Model to use (default: ollama/{DEFAULT_MODEL})")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show the plan without executing")
     args = parser.parse_args()
 
     model_name = args.model.replace("ollama/", "")
 
     log("=" * 50)
-    log("SELF-IMPROVEMENT EXPERIMENT")
+    log("AUTOBOT QUICK IMPROVEMENT")
     log(f"Model: {model_name}")
     log("=" * 50)
 
-    # Read our own source files
+    # Step 1: Read source files
     log("\nStep 1: Reading source files...")
 
     source_files = list(SCRIPT_DIR.glob("*.py"))
     source_content = ""
 
-    for f in source_files[:3]:  # Limit to 3 files
-        content = f.read_text()[:2000]  # First 2000 chars
+    for f in sorted(source_files)[:4]:  # Top 4 files
+        content = f.read_text()[:2500]  # First 2500 chars
         source_content += f"\n\n=== {f.name} ===\n{content}"
 
-    log(f"Read {len(source_files)} files")
+    log(f"Read {len(source_files)} Python files")
 
-    # Ask model what to improve
-    log("\nStep 2: Asking model what to improve...")
+    # Step 2: Ask model for improvements
+    log("\nStep 2: Asking model for improvement suggestions...")
 
-    analysis_prompt = f"""You are analyzing a Python project. Look at this code and suggest 3 small improvements.
+    analysis_prompt = f"""You are analyzing Autobot, a self-improving AI agent written in Python.
+
+Review this code and suggest 3 small, focused improvements.
 
 {source_content}
 
-List exactly 3 improvements. For each one:
-- Which file to change
-- What to change (be specific)
-- Why it helps
+For each improvement:
+1. Which file to change
+2. What specific change to make
+3. Why it improves the code
 
-Keep suggestions SMALL and SIMPLE. One-line fixes are best.
+Keep suggestions SMALL and SIMPLE. Prefer:
+- Bug fixes
+- Error handling improvements
+- Code clarity improvements
+- Performance optimizations
+
 Format as a numbered list."""
 
     suggestions = ask_model(analysis_prompt, model_name)
@@ -85,37 +109,43 @@ Format as a numbered list."""
     print(suggestions)
     print("=" * 50)
 
-    # Generate tasks file
-    log("\nStep 3: Generating tasks...")
+    # Step 3: Convert to tasks
+    log("\nStep 3: Generating task file...")
 
-    tasks_prompt = f"""Convert these suggestions into task format.
+    tasks_prompt = f"""Convert these improvement suggestions into task format for Aider.
 
 SUGGESTIONS:
 {suggestions}
 
-Write in this exact format (markdown with ## headers):
+Write in this exact markdown format:
 
 ## Task 1: [title]
-[detailed description of what to change]
+[Detailed description of what to change, including the file name and specific code changes]
 
 ## Task 2: [title]
-[detailed description of what to change]
+[Detailed description]
 
 ## Task 3: [title]
-[detailed description of what to change]
+[Detailed description]
 
 Be very specific about file names and what code to write."""
 
     tasks_md = ask_model(tasks_prompt, model_name)
 
     if not tasks_md or "## Task" not in tasks_md:
-        log("Failed to generate tasks")
-        print(tasks_md)
+        log("Failed to generate valid tasks")
+        if tasks_md:
+            print(tasks_md)
         return 1
 
     # Save tasks
-    tasks_file = SCRIPT_DIR / "self_tasks.md"
-    tasks_file.write_text(f"# Self-Improvement Tasks\nGenerated: {datetime.now()}\n\n{tasks_md}")
+    tasks_file = SCRIPT_DIR / "quick_tasks.md"
+    tasks_file.write_text(
+        f"# Quick Self-Improvement Tasks\n"
+        f"Generated: {datetime.now().isoformat()}\n"
+        f"Model: {model_name}\n\n"
+        f"{tasks_md}"
+    )
 
     print("\n" + "=" * 50)
     print("GENERATED TASKS:")
@@ -126,40 +156,36 @@ Be very specific about file names and what code to write."""
     log(f"\nTasks saved to: {tasks_file}")
 
     if args.dry_run:
-        log("\n[DRY RUN] Would now run these tasks")
+        log("\n[DRY RUN] Would now execute these tasks")
         return 0
 
-    # Run the tasks
-    log("\nStep 4: Executing self-improvement...")
+    # Step 4: Execute tasks
+    log("\nStep 4: Executing improvements...")
 
-    # Create a branch for safety
-    subprocess.run(
-        ["git", "checkout", "-b", f"self-improve-{datetime.now().strftime('%Y%m%d-%H%M%S')}"],
-        cwd=SCRIPT_DIR,
-        capture_output=True
+    from runner import TaskRunner
+
+    runner = TaskRunner(
+        project_path=str(SCRIPT_DIR),
+        model=args.model,
+        dry_run=False,
+        verbose=True
     )
 
-    cmd = [
-        "python3", str(SCRIPT_DIR / "simple_overnight.py"),
-        "--project", str(SCRIPT_DIR),
-        "--tasks", str(tasks_file),
-        "--model", args.model
-    ]
-
-    log(f"Running: {' '.join(cmd)}")
-
-    result = subprocess.run(cmd, cwd=SCRIPT_DIR)
+    branch = f"autobot-quick-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    result = runner.run_tasks_from_file(tasks_file, branch)
 
     log("\n" + "=" * 50)
-    if result.returncode == 0:
-        log("SELF-IMPROVEMENT COMPLETE!")
-        log("Check git log to see what changed")
+    if result == 0:
+        log("QUICK IMPROVEMENT COMPLETE!")
+        log(f"Check branch: {branch}")
+        log("Run 'git log --oneline' to see changes")
     else:
-        log("SELF-IMPROVEMENT HAD ISSUES")
-        log("Check the branch to see partial progress")
+        log("QUICK IMPROVEMENT HAD ISSUES")
+        log("Check the branch for partial progress")
     log("=" * 50)
 
-    return result.returncode
+    return result
+
 
 if __name__ == "__main__":
     sys.exit(main())
