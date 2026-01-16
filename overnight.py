@@ -47,8 +47,8 @@ import psutil
 
 
 # Configuration
-DEFAULT_MODEL = "ollama/qwen2.5-coder:3b"  # Local Ollama model (~2GB VRAM, fits 4GB cards)
-SMART_MODEL = "gemini/gemini-3-pro-preview"  # Cloud model for complex tasks (hybrid mode)
+DEFAULT_MODEL = "ollama/qwen2.5-coder:1.5b"  # Local Ollama model (~1.5GB VRAM, fits 4GB cards easily)
+SMART_MODEL = "gemini/gemini-2.5-flash-preview-05-20"  # Cloud model for complex tasks (cheap, fast, good)
 DEFAULT_TIMEOUT = 1800  # 30 minutes per task
 MAX_RAM_PERCENT = 75  # Pause if RAM usage exceeds this
 RAM_CHECK_INTERVAL = 30  # Check RAM every 30 seconds
@@ -65,6 +65,7 @@ COMPLEX_TASK_KEYWORDS = [
     # Complex Features
     "algorithm", "optimize", "performance", "refactor", "debug", "fix bug",
     "integration", "api", "database", "authentication", "security",
+    "search", "functionality", "feature", "implement",  # New feature work
     # Creative/Design
     "creative", "invent", "original", "unique", "vision",
 ]
@@ -110,7 +111,7 @@ Think step-by-step:
 Now implement the task."""
 
 # Prompt Loop Configuration
-PROMPT_LOOP_MODEL = "ollama/qwen2.5-coder:3b"  # Same as DEFAULT_MODEL to avoid model swapping
+PROMPT_LOOP_MODEL = "ollama/qwen2.5-coder:1.5b"  # Same as DEFAULT_MODEL to avoid model swapping
 PROMPT_LOOP_MAX_ITERATIONS = 20  # Safety limit (but model decides when done)
 PROMPT_LOOP_TIMEOUT = 120  # Timeout per iteration in seconds
 
@@ -611,18 +612,19 @@ def select_model_for_task(task_id: int, title: str, description: str,
     Returns: (model_name, reason)
 
     Hybrid mode strategy:
-    - Task 1-3: Always use smart model (foundation is critical)
-    - Complex tasks: Use smart model (keywords detected)
-    - Simple tasks: Use local model (save money)
+    - Task 1: Always use smart model (project setup is critical)
+    - Simple tasks: Use local model (polish, colors, tweaks)
+    - Complex tasks: Use smart model (features, architecture)
+    - Default: Local model for cost savings
     """
     if not hybrid_mode:
         return base_model, "hybrid mode disabled"
 
     combined_text = f"{title} {description}".lower()
 
-    # First 3 tasks are always critical - use smart model
-    if task_id <= 3:
-        return SMART_MODEL, "early task (foundation)"
+    # First task (project setup) is always critical - use smart model
+    if task_id == 1:
+        return SMART_MODEL, "setup task (foundation)"
 
     # Check for simple task keywords first (override complex if explicitly simple)
     if any(kw in combined_text for kw in SIMPLE_TASK_KEYWORDS):
